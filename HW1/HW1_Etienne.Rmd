@@ -6,10 +6,6 @@ author:
 - Group Member 3
 date: 'Due: 11:59PM,  Feb 1, 2026'
 output:
-  pdf_document:
-    number_sections: yes
-    toc: yes
-    toc_depth: '4'
   html_document:
     code_folding: show
     highlight: haddock
@@ -18,6 +14,10 @@ output:
     toc: yes
     toc_depth: 4
     toc_float: yes
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: '4'
   word_document:
     toc: yes
     toc_depth: '4'
@@ -107,15 +107,169 @@ Select only the variables Age, Gender, Education Level, Household Income in 2013
 
 Change the variable names to be "age", "gender", "education", "income", "sirius", "wharton", "worktime".
 
+```{r}
+# Load in the survey results
+survey <- read.csv("Survey_results_final.csv")
+
+# Select and rename relevant variables
+survey_clean <- survey %>%
+  select(
+    age = Answer.Age,
+    gender = Answer.Gender,
+    education = Answer.Education,
+    income = Answer.HouseHoldIncome,
+    sirius = Answer.Sirius.Radio,
+    wharton = Answer.Wharton.Radio,
+    worktime = WorkTimeInSeconds
+  )
+```
+
+
 2. Handle missing/wrongly filled values of the selected variables
 
 As in real world data with user input, the data is incomplete, with missing values, and has incorrect responses. There is no general rule for dealing with these problems beyond “use common sense.” In whatever case, explain what the problems were and how you addressed them. Be sure to explain your rationale for your chosen methods of handling issues with the data. Do not use Excel for this, however tempting it might be.
 
 Tip: Reflect on the reasons for which data could be wrong or missing. How would you address each case? For this homework, if you are trying to predict missing values with regression, you are definitely overthinking. Keep it simple.
 
+To clean the data, we examined each variable individually for clearly invalid or missing responses. Given the relatively small sample size of 1,764, we aimed to be conservative in our data removal, only excluding entries that were unambiguously problematic or logically inconsistent.
+
+```{r, warning=FALSE}
+# Convert age to numeric (text entries become NA)
+survey_clean$age <- as.numeric(survey_clean$age)
+
+# Remove rows with age < 18, age > 90, or NA
+survey_clean <- survey_clean %>%
+  filter(age >= 18 & age <= 90 & !is.na(age))
+```
+
+**Age**: We first converted the age variable to numeric format, which resulted in 4 NA values from respondents who entered text (e.g., "eighteen", "female") instead of numbers. We also identified one response below MTurk's minimum age requirement of 18 (age 4) and one impossibly high age (223). These 6 problematic entries were removed, leaving 1,758 valid observations.
+
+```{r}
+# Convert empty strings to NA and remove
+survey_clean$gender[survey_clean$gender == ""] <- NA
+survey_clean <- survey_clean %>%
+  filter(!is.na(gender))
+```
+
+**Gender**: Six respondents left the gender field blank. These were removed as missing data, leaving 1,752 observations.
+
+```{r}
+# Remove "select one" and "Other"
+survey_clean <- survey_clean %>%
+  filter(education != "select one" & education != "Other")
+
+```
+
+**Education**: Eighteen respondents selected "select one," indicating they did not provide a valid response. An additional 2 selected "Other" without specification. We removed these 20 rows, leaving 1,732 observations.
+
+```{r}
+# Convert empty strings to NA and remove
+survey_clean$income[survey_clean$income == ""] <- NA
+survey_clean <- survey_clean %>%
+  filter(!is.na(income))
+```
+
+**Income**: Four respondents left the income field blank. Since the remaining distribution appeared reasonable, we removed only these 4 rows, leaving 1,728 observations.
+
+```{r}
+# Convert empty strings to NA and remove
+survey_clean$sirius[survey_clean$sirius == ""] <- NA
+survey_clean$wharton[survey_clean$wharton == ""] <- NA
+survey_clean <- survey_clean %>%
+  filter(!is.na(sirius) & !is.na(wharton))
+
+# Remove logically inconsistent responses (Wharton=Yes but Sirius=No)
+survey_clean <- survey_clean %>%
+  filter(!(sirius == "No" & wharton == "Yes"))
+```
+
+**Sirius and Wharton**: We found 5 blank responses across both variables (3 for Sirius, 2 for Wharton). Additionally, 2 respondents claimed to listen to Wharton Business Radio but not Sirius, which is logically impossible since Wharton airs on Sirius. We removed these 7 invalid rows, leaving 1,721 observations.
+
+**Worktime**: The distribution was reasonable, with a median of 21.0 seconds and mean of 22.5 seconds. While completion times ranged from 8 to 108 seconds, we retained all responses. The brief survey (6 questions) could feasibly be completed in 8 seconds by experienced MTurk workers, and longer times likely reflect interruptions or more careful reading.
+
 3. Brief summary 
 
 Write a brief report to summarize all the variables collected. Include both summary statistics (including sample size) and graphical displays such as histograms or bar charts where appropriate. Comment on what you have found from this sample. (For example - it's very interesting to think about why would one work for a job that pays only 10cents/each survey? Who are those survey workers? The answer may be interesting even if it may not directly relate to our goal.)
+
+```{r}
+# Summary statistics
+cat("Sample size:", nrow(survey_clean), "\n\n")
+
+cat("Age Distribution:\n")
+summary(survey_clean$age)
+
+cat("\nGender Distribution:\n")
+table(survey_clean$gender)
+
+cat("\nEducation Distribution:\n")
+table(survey_clean$education)
+
+cat("\nIncome Distribution:\n")
+table(survey_clean$income)
+
+cat("\nSirius Radio Listeners:\n")
+table(survey_clean$sirius)
+
+cat("\nWharton Radio Listeners:\n")
+table(survey_clean$wharton)
+
+cat("\nSurvey Completion Time:\n")
+summary(survey_clean$worktime)
+
+# Visualizations
+hist(survey_clean$age, 
+     main = "Age Distribution", 
+     xlab = "Age", 
+     col = "lightblue",
+     breaks = 20)
+
+barplot(table(survey_clean$gender),
+        main = "Gender Distribution",
+        col = c("pink", "lightblue"),
+        ylab = "Count")
+
+par(mar = c(5, 15, 4, 2))
+barplot(table(survey_clean$education),
+        main = "Education Level Distribution",
+        col = "lightgreen",
+        horiz = TRUE,
+        las = 1,
+        cex.names = 0.7,
+        xlab = "Count")
+par(mar = c(5, 4, 4, 2))
+
+par(mar = c(5, 10, 4, 2))
+barplot(table(survey_clean$income),
+        main = "Income Distribution",
+        col = "lightcoral",
+        horiz = TRUE,
+        las = 1,
+        cex.names = 0.7,
+        xlab = "Count")
+par(mar = c(5, 4, 4, 2))
+
+barplot(table(survey_clean$sirius),
+        main = "Sirius Radio Listeners",
+        col = "purple",
+        ylab = "Count")
+
+barplot(table(survey_clean$wharton),
+        main = "Wharton Radio Listeners",
+        col = "orange",
+        ylab = "Count")
+
+hist(survey_clean$worktime,
+     main = "Survey Completion Time",
+     xlab = "Seconds",
+     col = "lightyellow",
+     breaks = 30)
+```
+
+The sample of 1,721 responses consists primarily of young, educated individuals with a median age of 28. The vast majority (89%) have education beyond high school, with 43% having some college or an Associate's degree and 46% holding Bachelor's degrees or higher. Income is distributed across middle-income brackets, with most earning between $15,000 and $75,000 annually. This demographic profile suggests MTurk workers are typically young professionals or students supplementing their income through flexible side work. The brief nature of these surveys (median completion time of 21 seconds) allows workers to earn money efficiently in spare moments throughout the day.
+
+For our main variables of interest, 1,334 respondents (77.5%) listen to Sirius, but only 67 (3.9%) listen to Wharton Business Radio, representing just 5% of Sirius listeners. This suggests the Wharton show has limited reach among the platform's existing audience.
+
+
 
 ## Sample properties
 
@@ -123,7 +277,11 @@ The population from which the sample is drawn determines where the results of ou
 
 1. Does this sample appear to be a random sample from the general population of the USA? Why it is crucial to have randomness here? 
 
+Our MTurk sample does not appear to be representative of the general US population. Compared to 2014 US Census data, our sample is significantly younger (median age 28 vs. 37-38 nationally), more educated (46% with Bachelor's degrees vs. ~32% nationally), slightly male-dominated (59% vs. 49% nationally), and skews toward lower-middle income brackets. This lack of representativeness is crucial because media consumption habits likely vary by age and education - younger, more educated individuals may use streaming services and online radio differently than the general population, potentially biasing our Sirius and Wharton listenership estimates.
+
 2. Does this sample appear to be a random sample from the MTURK population?
+
+Based on available research on MTurk demographics, our sample appears reasonably representative of the MTurk worker population. MTurk workers typically skew younger, more educated, and earn average incomes compared to the general US population, which are all characteristics that match our sample. This suggests that while our sample is not representative of Americans overall, it likely reflects the MTurk population reasonably well.
 
 Note: You can not provide evidence by simply looking at our data here. For example, you need to find distribution of education in our age group in US to see if the two groups match in distribution. You may need to gather some background information about the MTURK population to have a slight sense if this particular sample seem to a random sample from there... Please do not spend too much time gathering evidence. 
 
@@ -137,6 +295,45 @@ To be specific, you should include:
 2. Method used: data gathering, estimation methods
 3. Findings
 4. Limitations of the study. 
+
+```{r}
+# Calculate 95% confidence interval for Wharton audience size
+wharton_listeners <- 67
+sirius_listeners <- 1334
+p_hat <- wharton_listeners / sirius_listeners
+
+se <- sqrt(p_hat * (1 - p_hat) / sirius_listeners)
+me <- 1.96 * se
+
+ci_lower_prop <- p_hat - me
+ci_upper_prop <- p_hat + me
+
+sirius_population <- 51.6  # in millions
+ci_lower_audience <- ci_lower_prop * sirius_population
+ci_upper_audience <- ci_upper_prop * sirius_population
+point_estimate <- p_hat * sirius_population
+
+cat("Point estimate:", point_estimate, "million listeners\n")
+cat("95% CI: (", ci_lower_audience, ",", ci_upper_audience, ") million listeners\n")
+```
+
+**Executive Summary: Wharton Business Radio Audience Size Estimation**
+
+**Goal:**
+
+The goal of this study was to estimate the audience size of Wharton Business Radio in May 2014.
+
+**Method:**
+
+We launched a survey via Amazon Mechanical Turk (MTurk) on May 24, 2014, offering $0.10 per response. We collected 1,764 responses from MTurk workers in the United States. After data cleaning to remove invalid entries (incorrect ages, missing data, and logically inconsistent responses), we retained 1,721 valid responses. Our estimation method calculated the proportion of Sirius Radio listeners who also listen to Wharton Business Radio, then scaled this proportion to the total Sirius subscriber base of 51.6 million.
+
+**Findings:**
+
+Among our sample, 1,334 respondents (77.5%) reported listening to Sirius, and 67 of those Sirius listeners (5.0%) also listened to Wharton Business Radio. Using a 95% confidence interval for this proportion and scaling to the 51.6 million Sirius subscribers, we estimate the Wharton audience size to be **2.59 million listeners, with a 95% confidence interval of 1.99 to 3.20 million listeners**.
+
+**Limitations:**
+
+While our sample appears representative of the MTurk worker population, it is not representative of the general US population. Our sample skews younger (median age 28 vs. 37-38 nationally), more educated (46% with Bachelor's degrees vs. 32% nationally), and slightly more male than the US population. This demographic bias is significant because radio listening habits likely vary by age and education. For example, older individuals may have different preferences for talk radio and business content compared to younger listeners. Therefore, the 5.0% proportion observed in our sample may not accurately reflect the true proportion among all 51.6 million Sirius subscribers, potentially biasing our audience size estimate.
 
 
 ## New task
@@ -153,7 +350,24 @@ Please fill in the google form to list your platform where surveys will be launc
 
 A good proposal will give an accurate estimation with the least amount of money used. 
 
+**Proposal: Estimating Wharton Business Radio Audience Size**
 
+**Method:**
+
+We propose using Prolific Academic, a professional online survey platform, to estimate the Wharton Business Radio audience size. We will survey approximately 2,500-2,700 US residents who are Sirius subscribers, calculate the proportion who listen to Wharton Business Radio, and scale this to the current total Sirius subscriber base.
+
+To address the key limitation of the original MTurk study, we will implement demographic quotas to match US Census distributions for age, gender, education, and income. This ensures our sample is representative of the general US population, producing a more accurate estimate than the demographically skewed MTurk sample.
+
+**Data Collection:**
+
+- **Source:** Prolific Academic (professional survey panel with pre-screening capabilities)
+- **Sample:** ~2,500-2,700 Sirius subscribers in the US
+- **Screening:** Pre-filter for current Sirius subscribers
+- **Quotas:** Match US population by age, gender, education level, and household income
+- **Questions:** Sirius listening status (confirmation), Wharton listening status, basic demographics
+- **Survey length:** ~2 minutes
+- **Budget:** ~$0.36 per response × 2,700 responses ≈ $972 total ($729 participant costs + $243 platform fee). This budget is an estimate and may vary based on actual completion rates and platform fees.
+- **Timeline:** 2 weeks survey design, 2 weeks data collection, 4 weeks analysis and reporting
 
 
 
