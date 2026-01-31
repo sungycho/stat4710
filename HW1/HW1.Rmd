@@ -1,0 +1,929 @@
+---
+title: " Modern Data Mining, HW 1"
+author:
+- Sung Cho
+- Etienne Lee
+- Leo Li
+date: 'Due: 11:59PM,  Feb 1, 2026'
+output:
+  html_document:
+    code_folding: show
+    highlight: haddock
+    number_sections: yes
+    theme: lumen
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: '4'
+  word_document:
+    toc: yes
+    toc_depth: '4'
+urlcolor: blue
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, results = "hide", fig.width=8, fig.height=4)
+options(scipen = 0, digits = 3)  # controls base R output
+# check if you have ISLR package, if not, install it
+if(!require('pacman')) {install.packages('pacman')}
+pacman::p_load(ISLR, readxl, tidyverse, magrittr, dplyr, ggplot2)
+```
+
+
+\pagebreak
+
+# Overview
+
+This is a fast-paced course that covers a lot of material. There will be a large amount of references. You may need to do your own research to fill in the gaps in between lectures and homework/projects. It is impossible to learn data science without getting your hands dirty. Please budget your time evenly. Last-minute work ethic will not work for this course. 
+
+Homework in this course is different from your usual homework assignment as a typical student. Most of the time, they are built over real case studies.  While you will be applying methods covered in lectures, you will also find that extra teaching materials appear here.  The focus will be always on the goals of the study, the usefulness of the data gathered, and the limitations in any conclusions you may draw. Always try to challenge your data analysis in a critical way. Frequently, there are no unique solutions. 
+
+Case studies in each homework can be listed as your data science projects (e.g. on your CV) where you see fit. 
+
+
+## Objectives 
+
+- Get familiar with `R-studio` and `RMarkdown`
+- Hands-on R 
+- Learn data science essentials 
+    - gather data
+    - clean data
+    - summarize data 
+    - display data
+    - conclusion
+- Packages
+    - `dplyr`
+    - `ggplot`
+
+##  Instructions
+
+- **Homework assignments can be done in a group consisting of up to three members**. Please find your group members as soon as possible and register your group on our Canvas site.
+
+- **All work submitted should be completed in the R Markdown format.** You can find a cheat sheet for R Markdown [here](https://posit.co/resources/cheatsheets/) For those who have never used it before, we urge you to start this homework as soon as possible. 
+
+- **Submit the following files, one submission for each group:**  (1) Rmd file, (2) a compiled  HTML or pdf version, and (3) all necessary data files if different from our source data. You may directly edit this .rmd file to add your answers. If you intend to work on the problems separately within your group, compile your answers into one Rmd file before submitting. We encourage that you at least attempt each problem by yourself before working with your teammates. Additionally, ensure that you can 'knit' or compile your Rmd file. It is also likely that you need to configure Rstudio to properly convert files to PDF. [**These instructions**](http://kbroman.org/knitr_knutshell/pages/latex.html#converting-knitrlatex-to-pdf) might be helpful.
+
+- In general, be as concise as possible while giving a fully complete answer to each question. All necessary datasets are available in this homework folder on Canvas. Make sure to document your code with comments (written on separate lines in a code chunk using a hashtag `#` before the comment) so the teaching fellows can follow along. R Markdown is particularly useful because it follows a 'stream of consciousness' approach: as you write code in a code chunk, make sure to explain what you are doing outside of the chunk. 
+
+- A few good or solicited submissions will be used as sample solutions. When those are released, make sure to compare your answers and understand the solutions.
+
+**Use of Generative AI (GAI)**
+
+Generative AI tools (e.g., ChatGPT, Copilot) are permitted for homework assignments and the final project. However, GAI may be used only as an assistant, not as a substitute for your own understanding or work. Students are expected to fully understand, verify, and be able to explain every step of their analysis, including data preparation, exploratory analysis, modeling choices, code, and interpretation of results. In particular, students must be able to write, modify, and debug all code on their own. Reliance on GAI-generated code without understanding is not acceptable. You are fully responsible for the correctness, clarity, and integrity of your submission, regardless of whether GAI was used.
+
+
+
+
+
+## Review materials
+
+- Study Basic R Tutorial
+- Study Advanced R Tutorial (to include `dplyr` and `ggplot`)
+- Study lecture 1: Data Acquisition and EDA
+
+
+# Case study 1: Audience Size
+
+How successful was the Wharton Talk Show **Business Radio Powered by the Wharton School**
+
+
+**Background:** Have you ever listened to [SiriusXM](https://www.siriusxm.com/)? Do you know there was a **Talk Show** run by Wharton professors in Sirius Radio?  Wharton launched a talk show called **Business Radio Powered by the Wharton School** through the Sirius Radio station in January of 2014. Within a short period of time the general reaction seemed to be overwhelmingly positive. The school would like to **estimate the audience size** in May, 2014. There were 51.6 million Sirius Radio listeners then. One approach is to estimate the proportion of the Wharton listeners to that of the Sirius listeners, $p$, so that we will come up with an audience size estimate of approximately 51.6 million times $p$. 
+
+To do so, we launched a survey via Amazon Mechanical Turk ([MTurk](https://www.mturk.com/)) on May 24, 2014 at an offered price of \$0.10 for each answered survey.  We set it to be run for 6 days with a target maximum sample size of 2000 as our goal. Most of the observations came in within the first two days. The main questions of interest are "Have you ever listened to Sirius Radio" and "Have you ever listened to Sirius Business Radio by Wharton?" A few demographic features used as control variables were also collected; these include Gender, Age and Household Income.  
+
+We requested that only people in United States answer the questions. Each person can only fill in the questionnaire once to avoid duplicates. Aside from these restrictions, we opened the survey to everyone in MTurk with a hope that the sample would be more randomly chosen. 
+
+The raw data is stored as `Survey_results_final.csv` on Canvas.
+
+## Data preparation
+
+1. We need to clean and select only the variables of interest. 
+
+Select only the variables Age, Gender, Education Level, Household Income in 2013, Sirius Listener?, Wharton Listener? and Time used to finish the survey.
+
+Change the variable names to be "age", "gender", "education", "income", "sirius", "wharton", "worktime".
+
+```{r}
+# Load in the survey results
+survey <- read.csv("data/Survey_results_final.csv")
+
+# Select and rename relevant variables
+survey_clean <- survey %>%
+  select(
+    age = Answer.Age,
+    gender = Answer.Gender,
+    education = Answer.Education,
+    income = Answer.HouseHoldIncome,
+    sirius = Answer.Sirius.Radio,
+    wharton = Answer.Wharton.Radio,
+    worktime = WorkTimeInSeconds
+  )
+```
+
+
+2. Handle missing/wrongly filled values of the selected variables
+
+As in real world data with user input, the data is incomplete, with missing values, and has incorrect responses. There is no general rule for dealing with these problems beyond “use common sense.” In whatever case, explain what the problems were and how you addressed them. Be sure to explain your rationale for your chosen methods of handling issues with the data. Do not use Excel for this, however tempting it might be.
+
+Tip: Reflect on the reasons for which data could be wrong or missing. How would you address each case? For this homework, if you are trying to predict missing values with regression, you are definitely overthinking. Keep it simple.
+
+To clean the data, we examined each variable individually for clearly invalid or missing responses. Given the relatively small sample size of 1,764, we aimed to be conservative in our data removal, only excluding entries that were unambiguously problematic or logically inconsistent.
+
+```{r, warning=FALSE}
+# Convert age to numeric (text entries become NA)
+survey_clean$age <- as.numeric(survey_clean$age)
+
+# Remove rows with age < 18, age > 90, or NA
+survey_clean <- survey_clean %>%
+  filter(age >= 18 & age <= 90 & !is.na(age))
+```
+
+**Age**: We first converted the age variable to numeric format, which resulted in 4 NA values from respondents who entered text (e.g., "eighteen", "female") instead of numbers. We also identified one response below MTurk's minimum age requirement of 18 (age 4) and one impossibly high age (223). These 6 problematic entries were removed, leaving 1,758 valid observations.
+
+```{r}
+# Convert empty strings to NA and remove
+survey_clean$gender[survey_clean$gender == ""] <- NA
+survey_clean <- survey_clean %>%
+  filter(!is.na(gender))
+```
+
+**Gender**: Six respondents left the gender field blank. These were removed as missing data, leaving 1,752 observations.
+
+```{r}
+# Remove "select one" and "Other"
+survey_clean <- survey_clean %>%
+  filter(education != "select one" & education != "Other")
+
+```
+
+**Education**: Eighteen respondents selected "select one," indicating they did not provide a valid response. An additional 2 selected "Other" without specification. We removed these 20 rows, leaving 1,732 observations.
+
+```{r}
+# Convert empty strings to NA and remove
+survey_clean$income[survey_clean$income == ""] <- NA
+survey_clean <- survey_clean %>%
+  filter(!is.na(income))
+```
+
+**Income**: Four respondents left the income field blank. Since the remaining distribution appeared reasonable, we removed only these 4 rows, leaving 1,728 observations.
+
+```{r}
+# Convert empty strings to NA and remove
+survey_clean$sirius[survey_clean$sirius == ""] <- NA
+survey_clean$wharton[survey_clean$wharton == ""] <- NA
+survey_clean <- survey_clean %>%
+  filter(!is.na(sirius) & !is.na(wharton))
+
+# Remove logically inconsistent responses (Wharton=Yes but Sirius=No)
+survey_clean <- survey_clean %>%
+  filter(!(sirius == "No" & wharton == "Yes"))
+```
+
+**Sirius and Wharton**: We found 5 blank responses across both variables (3 for Sirius, 2 for Wharton). Additionally, 2 respondents claimed to listen to Wharton Business Radio but not Sirius, which is logically impossible since Wharton airs on Sirius. We removed these 7 invalid rows, leaving 1,721 observations.
+
+**Worktime**: The distribution was reasonable, with a median of 21.0 seconds and mean of 22.5 seconds. While completion times ranged from 8 to 108 seconds, we retained all responses. The brief survey (6 questions) could feasibly be completed in 8 seconds by experienced MTurk workers, and longer times likely reflect interruptions or more careful reading.
+
+3. Brief summary 
+
+Write a brief report to summarize all the variables collected. Include both summary statistics (including sample size) and graphical displays such as histograms or bar charts where appropriate. Comment on what you have found from this sample. (For example - it's very interesting to think about why would one work for a job that pays only 10cents/each survey? Who are those survey workers? The answer may be interesting even if it may not directly relate to our goal.)
+
+```{r, results="show"}
+# Summary statistics
+cat("Sample size:", nrow(survey_clean), "\n\n")
+
+cat("Age Distribution:\n")
+summary(survey_clean$age)
+
+cat("\nGender Distribution:\n")
+table(survey_clean$gender)
+
+cat("\nEducation Distribution:\n")
+table(survey_clean$education)
+
+cat("\nIncome Distribution:\n")
+table(survey_clean$income)
+
+cat("\nSirius Radio Listeners:\n")
+table(survey_clean$sirius)
+
+cat("\nWharton Radio Listeners:\n")
+table(survey_clean$wharton)
+
+cat("\nSurvey Completion Time:\n")
+summary(survey_clean$worktime)
+
+# Visualizations
+hist(survey_clean$age, 
+     main = "Age Distribution", 
+     xlab = "Age", 
+     col = "lightblue",
+     breaks = 20)
+
+barplot(table(survey_clean$gender),
+        main = "Gender Distribution",
+        col = c("pink", "lightblue"),
+        ylab = "Count")
+
+par(mar = c(5, 15, 4, 2))
+barplot(table(survey_clean$education),
+        main = "Education Level Distribution",
+        col = "lightgreen",
+        horiz = TRUE,
+        las = 1,
+        cex.names = 0.7,
+        xlab = "Count")
+par(mar = c(5, 4, 4, 2))
+
+par(mar = c(5, 10, 4, 2))
+barplot(table(survey_clean$income),
+        main = "Income Distribution",
+        col = "lightcoral",
+        horiz = TRUE,
+        las = 1,
+        cex.names = 0.7,
+        xlab = "Count")
+par(mar = c(5, 4, 4, 2))
+
+barplot(table(survey_clean$sirius),
+        main = "Sirius Radio Listeners",
+        col = "purple",
+        ylab = "Count")
+
+barplot(table(survey_clean$wharton),
+        main = "Wharton Radio Listeners",
+        col = "orange",
+        ylab = "Count")
+
+hist(survey_clean$worktime,
+     main = "Survey Completion Time",
+     xlab = "Seconds",
+     col = "lightyellow",
+     breaks = 30)
+```
+
+The sample of 1,721 responses consists primarily of young, educated individuals with a median age of 28. The vast majority (89%) have education beyond high school, with 43% having some college or an Associate's degree and 46% holding Bachelor's degrees or higher. Income is distributed across middle-income brackets, with most earning between $15,000 and $75,000 annually. This demographic profile suggests MTurk workers are typically young professionals or students supplementing their income through flexible side work. The brief nature of these surveys (median completion time of 21 seconds) allows workers to earn money efficiently in spare moments throughout the day.
+
+For our main variables of interest, 1,334 respondents (77.5%) listen to Sirius, but only 67 (3.9%) listen to Wharton Business Radio, representing just 5% of Sirius listeners. This suggests the Wharton show has limited reach among the platform's existing audience.
+
+
+
+## Sample properties
+
+The population from which the sample is drawn determines where the results of our analysis can be applied or generalized. We include some basic demographic information for the purpose of identifying sample bias, if any exists. Combine our data and the general population distribution in age, gender and income to try to characterize our sample on hand.
+
+1. Does this sample appear to be a random sample from the general population of the USA? Why it is crucial to have randomness here? 
+
+Our MTurk sample does not appear to be representative of the general US population. Compared to 2014 US Census data, our sample is significantly younger (median age 28 vs. 37-38 nationally), more educated (46% with Bachelor's degrees vs. ~32% nationally), slightly male-dominated (59% vs. 49% nationally), and skews toward lower-middle income brackets. This lack of representativeness is crucial because media consumption habits likely vary by age and education - younger, more educated individuals may use streaming services and online radio differently than the general population, potentially biasing our Sirius and Wharton listenership estimates.
+
+2. Does this sample appear to be a random sample from the MTURK population?
+
+Based on available research on MTurk demographics, our sample appears reasonably representative of the MTurk worker population. MTurk workers typically skew younger, more educated, and earn average incomes compared to the general US population, which are all characteristics that match our sample. This suggests that while our sample is not representative of Americans overall, it likely reflects the MTurk population reasonably well.
+
+Note: You can not provide evidence by simply looking at our data here. For example, you need to find distribution of education in our age group in US to see if the two groups match in distribution. You may need to gather some background information about the MTURK population to have a slight sense if this particular sample seem to a random sample from there... Please do not spend too much time gathering evidence. 
+
+## Final estimate
+
+Provide an approximate **95\% confidence interval** of the Wharton audience size by May of 2014. Assume that the sample is a random sample of the MTURK population, and that the proportion of Wharton listeners vs. Sirius listeners in the general population is the same as that in the MTURK population. Write a brief executive summary to summarize your findings and how you came to that conclusion.
+
+To be specific, you should include:
+
+1. Goal of the study
+2. Method used: data gathering, estimation methods
+3. Findings
+4. Limitations of the study. 
+
+```{r}
+# Calculate 95% confidence interval for Wharton audience size
+wharton_listeners <- 67
+sirius_listeners <- 1334
+p_hat <- wharton_listeners / sirius_listeners
+
+se <- sqrt(p_hat * (1 - p_hat) / sirius_listeners)
+me <- 1.96 * se
+
+ci_lower_prop <- p_hat - me
+ci_upper_prop <- p_hat + me
+
+sirius_population <- 51.6  # in millions
+ci_lower_audience <- ci_lower_prop * sirius_population
+ci_upper_audience <- ci_upper_prop * sirius_population
+point_estimate <- p_hat * sirius_population
+
+cat("Point estimate:", point_estimate, "million listeners\n")
+cat("95% CI: (", ci_lower_audience, ",", ci_upper_audience, ") million listeners\n")
+```
+
+**Executive Summary: Wharton Business Radio Audience Size Estimation**
+
+**Goal:**
+
+The goal of this study was to estimate the audience size of Wharton Business Radio in May 2014.
+
+**Method:**
+
+We launched a survey via Amazon Mechanical Turk (MTurk) on May 24, 2014, offering $0.10 per response. We collected 1,764 responses from MTurk workers in the United States. After data cleaning to remove invalid entries (incorrect ages, missing data, and logically inconsistent responses), we retained 1,721 valid responses. Our estimation method calculated the proportion of Sirius Radio listeners who also listen to Wharton Business Radio, then scaled this proportion to the total Sirius subscriber base of 51.6 million.
+
+**Findings:**
+
+Among our sample, 1,334 respondents (77.5%) reported listening to Sirius, and 67 of those Sirius listeners (5.0%) also listened to Wharton Business Radio. Using a 95% confidence interval for this proportion and scaling to the 51.6 million Sirius subscribers, we estimate the Wharton audience size to be **2.59 million listeners, with a 95% confidence interval of 1.99 to 3.20 million listeners**.
+
+**Limitations:**
+
+While our sample appears representative of the MTurk worker population, it is not representative of the general US population. Our sample skews younger (median age 28 vs. 37-38 nationally), more educated (46% with Bachelor's degrees vs. 32% nationally), and slightly more male than the US population. This demographic bias is significant because radio listening habits likely vary by age and education. For example, older individuals may have different preferences for talk radio and business content compared to younger listeners. Therefore, the 5.0% proportion observed in our sample may not accurately reflect the true proportion among all 51.6 million Sirius subscribers, potentially biasing our audience size estimate.
+
+
+## New task
+
+Now suppose you are asked to design a study to estimate the audience size of Wharton Business Radio Show as of today: You are given a budget of $1000. You need to present your findings in two months. 
+
+Write a proposal for this study which includes:
+
+1. Method proposed to estimate the audience size.
+2. What data should be collected and where it should be sourced from. (Can we use ChatGPT to get us a rough estimate?)
+
+Please fill in the google form to list your platform where surveys will be launched and collected [HERE](https://forms.gle/8SmjFQ1tpqr6c4sa8) 
+
+
+A good proposal will give an accurate estimation with the least amount of money used. 
+
+**Proposal: Estimating Wharton Business Radio Audience Size**
+
+**Method:**
+
+We propose using Prolific Academic, a professional online survey platform, to estimate the Wharton Business Radio audience size. We will survey approximately 2,500-2,700 US residents who are Sirius subscribers, calculate the proportion who listen to Wharton Business Radio, and scale this to the current total Sirius subscriber base.
+
+To address the key limitation of the original MTurk study, we will implement demographic quotas to match US Census distributions for age, gender, education, and income. This ensures our sample is representative of the general US population, producing a more accurate estimate than the demographically skewed MTurk sample.
+
+**Data Collection:**
+
+- **Source:** Prolific Academic (professional survey panel with pre-screening capabilities)
+- **Sample:** ~2,500-2,700 Sirius subscribers in the US
+- **Screening:** Pre-filter for current Sirius subscribers
+- **Quotas:** Match US population by age, gender, education level, and household income
+- **Questions:** Sirius listening status (confirmation), Wharton listening status, basic demographics
+- **Survey length:** ~2 minutes
+- **Budget:** ~$0.36 per response × 2,700 responses ≈ $972 total ($729 participant costs + $243 platform fee). This budget is an estimate and may vary based on actual completion rates and platform fees.
+- **Timeline:** 2 weeks survey design, 2 weeks data collection, 4 weeks analysis and reporting
+
+
+
+# Case study 2: Women in Science
+
+
+Are women underrepresented in science in general? How does gender relate to the type of educational degree pursued? Does the number of higher degrees increase over the years? In an attempt to answer these questions, we assembled a data set (`WomenData_06_16.xlsx`) from [NSF](https://ncses.nsf.gov/pubs/nsf19304/digest/field-of-degree-women) about various degrees granted in the U.S. from 2006 to 2016. It contains the following variables: Field (Non-science-engineering (`Non-S&E`) and sciences (`Computer sciences`, `Mathematics and statistics`, etc.)), Degree (`BS`, `MS`, `PhD`), Sex (`M`, `F`), Number of degrees granted, and Year.
+
+Our goal is to answer the above questions only through EDA (Exploratory Data Analyses) without formal testing. We have provided sample R-codes in the appendix to help you if needed. 
+
+
+## Data preparation  
+
+1. Understand and clean the data
+
+Notice the data came in as an Excel file. We need to use the package `readxl` and the function `read_excel()` to read the data `WomenData_06_16.xlsx` into R. 
+
+
+a) Read the data into R.
+
+```{r}
+library(readxl)
+library(dplyr)
+library(ggplot2)
+
+women_data <- read_excel("data/WomenData_06_16.xlsx")
+```
+
+b) Clean the names of each variables. (Change variable names to  `Field`,`Degree`, `Sex`, `Year` and `Number` )
+
+```{r}
+names(women_data) <- c("Field", "Degree", "Sex", "Year", "Number")
+```
+
+c) Set the variable natures properly. 
+
+```{r}
+women_data$Field <- as.factor(women_data$Field)
+women_data$Degree <- as.factor(women_data$Degree)
+women_data$Sex <- as.factor(women_data$Sex)
+women_data$Year <- as.integer(women_data$Year)
+women_data$Number <- as.integer(women_data$Number)
+```
+
+d) Any missing values?
+
+```{r}
+sum(is.na(women_data))
+```
+No missing values are detected, suggesting the dataset is complete for exploratory analysis.
+
+2. Write a summary describing the data set provided here. 
+
+a) How many fields are there in this data?
+
+```{r}
+length(unique(women_data$Field))
+```
+
+b) What are the degree types? 
+
+```{r}
+unique(women_data$Degree)
+```
+
+c) How many year's statistics are being reported here? 
+
+```{r}
+length(unique(women_data$Year))
+```
+
+
+## BS degrees in 2015
+
+Is there evidence that more males are in science-related fields vs `Non-S&E`? Provide summary statistics and a plot which shows the number of people by gender and by field. Write a brief summary to describe your findings.
+
+```{r}
+# Subset the data to BS degrees awarded in 2015
+bs_2015 <- women_data %>% 
+  filter(Year == 2015, Degree == "BS")
+```
+
+```{r}
+# Summarize total BS degrees by field and gender
+bs_2015 %>% 
+  group_by(Field, Sex) %>%
+  summarise(Total = sum(Number), .groups="drop")
+```
+
+```{r, fig.width=20, fig.height=6}
+# Visualize BS degree counts by field and gender
+ggplot(bs_2015, aes(x = Field, y = Number, fill = Sex)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "BS Degrees by Field and Gender in 2015",
+    x = "Field",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal()
+```
+
+In 2015, male students appear more represented in several science and engineering fields, while Non-S&E fields tend to show higher female participation. This suggests a gender imbalance that differs substantially by field.
+
+
+## EDA bringing type of degree, field and gender in 2015
+
+Describe the number of people by type of degree, field, and gender. Do you see any evidence of gender effects over different types of degrees? Again, provide graphs to summarize your findings.
+
+```{r}
+# Subset data to the year 2015
+data_2015 <- women_data %>%
+  filter(Year == 2015)
+```
+
+```{r}
+# Aggregate degree counts by degree type, field, and gender
+deg_gender_2015 <- data_2015 %>%
+  group_by(Degree, Field, Sex) %>%
+  summarise(Total = sum(Number), .groups="drop")
+deg_gender_2015
+```
+
+```{r, fig.width=12, fig.height=6}
+# Compare degree counts by degree type and gender
+ggplot(deg_gender_2015, aes(x = Degree, y = Total, fill = Sex)) +
+  geom_col(position = "dodge") +
+  labs(
+    title = "Degrees in 2015 by Degree Type and Gender",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal()
+```
+```{r}
+# Create S&E indicator and subset to year 2015
+deg_gender_2015_se <- women_data %>%
+  filter(Year == 2015) %>%
+  mutate(
+    SE = ifelse(Field == "Non-S&E", "Non-S&E", "S&E")
+  ) %>%
+  group_by(Degree, SE, Sex) %>%
+  summarise(Total = sum(Number), .groups = "drop")
+
+ggplot(deg_gender_2015_se, aes(x = Degree, y = Total, fill = Sex)) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ SE, scales = "free_y") +
+  labs(
+    title = "Degrees in 2015 by Degree Type, Gender, and Field Classification",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal()
+```
+Gender differences vary substantially across fields. Although females receive a higher total number of degrees across all three degree levels when aggregating over all fields, this pattern changes once S&E fields are separated from Non-S&E fields. In Non-S&E fields, female degree recipients outnumber males across most degree types, particularly at the BS and MS levels. In contrast, within S&E fields, males receive substantially more degrees than females at all degree levels, with the gender gap becoming more pronounced for advanced degrees. The larger overall number of Non-S&E degrees awarded at each degree level helps explain why females appear to receive more degrees in aggregate. This suggests that observed gender differences by degree type are largely driven by field composition rather than degree level alone.
+
+## EDA bring all variables 
+
+In this last portion of the EDA, we ask you to provide evidence numerically and graphically: Do the number of  degrees change by gender, field, and time? 
+
+```{r}
+# Create S&E indicator and advanced degree flag
+women_base <- women_data %>%
+  mutate(
+    SE = ifelse(Field == "Non-S&E", "Non-S&E", "S&E"),
+    Advanced = Degree %in% c("MS", "PhD")
+  )
+
+# Aggregate degree counts by year, S&E classification, and gender
+se_year_gender <- women_base %>%
+  group_by(Year, SE, Sex) %>%
+  summarise(Total = sum(Number), .groups = "drop")
+
+# Plot trends over time
+ggplot(se_year_gender, aes(x = Year, y = Total, color = Sex)) +
+  geom_line() +
+  facet_wrap(~ SE, scales = "free_y") +
+  labs(
+    title = "Degrees Granted Over Time: S&E vs Non-S&E by Gender",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal()
+```
+```{r}
+# Focus on advanced degrees (MS and PhD)
+adv_field_year <- women_base %>%
+  filter(Advanced) %>%
+  group_by(Year, Field, Sex) %>%
+  summarise(Total = sum(Number), .groups = "drop")
+
+# Visualize advanced degree trends
+ggplot(adv_field_year, aes(x = Year, y = Total, color = Sex)) +
+  geom_line() +
+  facet_wrap(~ Field, scales = "free_y") +
+  labs(
+    title = "Advanced Degrees (MS + PhD) by Field and Gender Over Time",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal()
+```
+```{r, fig.width=12, fig.height=12}
+# Aggregate across all variables to obtain a complete overview
+all_vars <- women_data %>%
+  group_by(Year, Field, Degree, Sex) %>%
+  summarise(Total = sum(Number), .groups = "drop")
+
+# Visualize degree counts across time, field, degree, and gender
+ggplot(all_vars, aes(x = Year, y = Total, fill = Sex)) +
+  geom_col(position = "dodge") +
+  facet_grid(Field ~ Degree, scales = "free_y") +
+  labs(
+    title = "Overview: Degrees Granted by Year, Field, Degree, and Gender",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal()
+```
+```{r}
+library(plotly)
+
+# Interactive visualization allowing year-by-year exploration
+p_year_toggle <- women_base %>%
+  ggplot(
+    aes(
+      x = Field,
+      y = Number,
+      fill = Sex,
+      frame = Year
+    )
+  ) +
+  geom_col(position = "dodge") +
+  facet_wrap(~ Degree, scales = "free_y") +
+  labs(
+    title = "Degrees Granted by Field, Degree, and Gender",
+    y = "Number of Degrees"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+ggplotly(p_year_toggle)
+```
+```{r}
+# Compute female share within each year, degree type, and S&E group
+se_degree_share <- women_base %>%
+  group_by(Year, Degree, SE, Sex) %>%
+  summarise(Total = sum(Number), .groups = "drop") %>%
+  group_by(Year, Degree, SE) %>%
+  mutate(Share = Total / sum(Total))
+
+# Plot female proportion over time
+ggplot(
+  se_degree_share %>% filter(Sex == "Female"),
+  aes(x = Year, y = Share, color = SE)
+) +
+  geom_line() +
+  facet_wrap(~ Degree) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Female Share of Degrees by Degree Type and S&E Classification",
+    y = "Female Share"
+  ) +
+  theme_minimal()
+```
+Bringing together all variables—year, field, degree type, and gender—reveals several consistent patterns. Across nearly all fields and degree types, the total number of degrees awarded increases over time for both males and females, indicating a broad expansion in higher education attainment rather than changes driven by a single gender or field.
+
+Clear gender differences persist when examining degree counts by field and degree type. In Non-S&E fields, females consistently receive more degrees than males across all degree levels, and this pattern remains stable over time. In contrast, within most S&E fields, males receive more degrees than females, with particularly large gaps observed at the advanced degree levels (MS and PhD). Although some S&E fields—such as agricultural sciences, biological sciences, psychology, and social sciences—exhibit higher female participation at advanced levels, these fields account for relatively fewer total degrees compared to male-dominated areas like engineering, computer science, and mathematics/statistics.
+
+Focusing specifically on advanced degrees, gender disparities become more pronounced in many S&E fields. While degree counts for both males and females increase over time, the growth rate is often steeper for males in fields such as engineering and computer science. In contrast, Non-S&E fields maintain a sustained female majority even at the advanced degree level.
+
+Examining female shares provides additional insight beyond absolute counts. Female representation remains consistently higher in Non-S&E fields across all degree types, whereas S&E fields exhibit lower female shares, particularly at the MS and PhD levels. Although female participation in S&E has increased modestly over time, the gap relative to Non-S&E fields persists, suggesting that observed differences are not solely driven by overall growth in degree attainment.
+
+Overall, these patterns indicate that gender differences in degree attainment are shaped by both field composition and degree level. Despite overall growth in degrees awarded to both genders, persistent disparities—especially within science and engineering fields—remain evident throughout the study period.study period.
+
+## Women in Data Science
+
+Finally, is there evidence showing that women are underrepresented in data science? Data science is an interdisciplinary field of computer science, math, and statistics. You may include year and/or degree.
+
+```{r}
+# Define data science fields
+ds_fields <- c("Computer sciences", "Mathematics and statistics")
+
+# Group fields into Data Science, S&E, and Non-S&E
+women_grouped <- women_data %>%
+  mutate(
+    Group = case_when(
+      Field %in% ds_fields ~ "Data Science",
+      Field == "Non-S&E"   ~ "Non-S&E",
+      TRUE                 ~ "S&E"
+    )
+  )
+```
+
+```{r}
+# Aggregate counts by year, group, and gender
+group_year_sex <- women_grouped %>%
+  group_by(Year, Group, Sex) %>%
+  summarise(Total = sum(Number), .groups = "drop")
+group_year_sex
+```
+
+```{r}
+# Compute female share within each group
+group_share <- group_year_sex %>%
+  group_by(Year, Group) %>%
+  mutate(Share = Total / sum(Total))
+group_share
+```
+
+```{r}
+# Plot female representation across groups
+ggplot(
+  group_share %>% filter(Sex == "Female"),
+  aes(x = Year, y = Share, color = Group)
+) +
+  geom_line() +
+  scale_y_continuous(labels = scales::percent) +
+  labs(
+    title = "Female Representation: Data Science vs S&E vs Non-S&E",
+    y = "Female Share of Degrees"
+  ) +
+  theme_minimal()
+```
+Women are underrepresented in data science relative to both Non-S&E fields and the overall S&E category. While female participation has increased over time, data science remains below the S&E average.
+
+## Final brief report
+
+Summarize your findings focusing on answering the questions regarding if we see consistent patterns that more males pursue science-related fields. Any concerns with the data set? How could we improve on the study?
+
+Across the dataset, we observe consistent gender differences in educational attainment by field and degree type. Women are more represented in Non-S&E fields, while men dominate most science and engineering disciplines. This disparity becomes more pronounced at advanced degree levels, indicating a potential narrowing of the pipeline for women in higher education.
+
+Over time, the total number of degrees awarded has increased for both genders across most fields. However, relative gender shares show that improvements in female representation have been uneven, particularly within science-related areas.
+
+Data science, defined here as computer science and mathematics/statistics, exhibits lower female representation compared to both Non-S&E and the broader S&E category. Although female participation has grown over time, a noticeable gap remains.
+
+This analysis is purely exploratory and does not account for population size, enrollment rates, or causal mechanisms. The dataset aggregates broad fields and may mask within-field heterogeneity. Future studies could incorporate enrollment data, institutional characteristics, or longitudinal tracking to better understand the drivers behind observed gender patterns.
+
+
+
+# Case study 3: Major League Baseball
+
+We would like to explore how payroll affects performance among Major League Baseball teams. The data is prepared in two formats record payroll, winning numbers/percentage by team from 1998 to 2014. 
+
+Here are the datasets:
+
+- `MLPayData_Total.csv`: wide format
+- `baseball.csv`: long format
+
+Feel free to use either dataset to address the problems. 
+
+```{r, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+
+# Read in the long-format baseball data
+baseball <- read_csv("data/baseball.csv")
+
+# Read in the wide-format payroll data (we may or may not use this later)
+pay_wide <- read_csv("data/MLPayData_Total.csv")
+
+# str(baseball)
+# head(baseball)
+
+```
+
+## EDA: Relationship between payroll changes and performance
+
+Payroll may relate to performance among ML Baseball teams. One possible argument is that what affects this year's performance is not this year's payroll, but the amount that payroll increased from last year. Let us look into this through EDA. 
+
+Create increment in payroll
+
+a). To describe the increment of payroll in each year there are several possible approaches. Take 2013 as an example:
+
+    - option 1: diff: payroll_2013 - payroll_2012
+    - option 2: log diff: log(payroll_2013) - log(payroll_2012)
+
+Explain why the log difference is more appropriate in this setup.
+
+Answer: Using the log difference of payroll rather than the raw dollar difference allows us to measure relative changes in payroll instead of absolute changes. The log difference is approximately equal to the percentage change in payroll from 2012 to 2013. This makes payroll changes comparable across teams and years, regardless of scale, and reduces the influence of teams with unusually large payrolls dominating the analysis. In this context, performance is more possibly affected by how much a team invests relative to its previous level, rather than by the absolute dollar amount of the increase. Therefore, the log difference provides a more meaningful measure of payroll growth when exploring its relationship with team performance.
+
+b). Create a new variable `diff_log=log(payroll_2013) - log(payroll_2012)`. Hint: use `dplyr::lag()` function.
+
+```{r}
+library(dplyr)
+
+baseball_logdiff <- baseball %>%
+  arrange(team, year) %>%        # ensure correct time ordering
+  group_by(team) %>%             # compute changes within each team
+  mutate(
+    diff_log = log(payroll) - log(lag(payroll))
+  ) %>%
+  ungroup()
+
+baseball_logdiff
+```
+
+
+c). Create a long data table including: team, year, diff_log, win_pct
+
+```{r}
+analysis_df <- baseball_logdiff %>%
+  select(team, year, diff_log, win_pct)
+
+head(analysis_df)
+summary(analysis_df$diff_log)
+```
+
+## Exploratory questions
+
+a). Which five teams had highest increase in their payroll between years 2010 and 2014, inclusive?
+
+Answer: We interpret “highest increase in payroll between 2010 and 2014” as the largest single-year payroll increases observed within that period, consistent with our focus on year-to-year log payroll changes. Under this interpretation, we rank team–year observations by diff_log. We restrict the dataset to years 2010 through 2014 (inclusive). For each team-year observation, diff_log measures how much the team’s payroll increased relative to the previous year on the log scale, which is approximately the percent change. We then sort by diff_log in descending order and take the top 5 rows. This returns the five largest payroll increases (team-year pairs) observed during 2010–2014.
+
+```{r}
+top5_payroll_increase_2010_2014 <- baseball_logdiff %>%
+  filter(year >= 2010, year <= 2014) %>%     # restrict to 2010–2014 (inclusive)
+  arrange(desc(diff_log)) %>%                # largest log payroll increases first
+  select(team, year, diff_log, payroll) %>%  # keep relevant columns for interpretation
+  slice_head(n = 5)
+
+top5_payroll_increase_2010_2014
+```
+Answer: The top 5 teams that experienced highest increase in payroll between 2010 and 2014 are the Dodgers, Marlines, Astros, Royals, and Rangers. 
+
+
+b). Between 2010 and 2014, inclusive, which team(s) "improved" the most? That is, had the biggest percentage gain in wins?
+
+Answer: To measure which teams improved the most between 2010 and 2014, we compare each team’s winning percentage in 2014 to its winning percentage in 2010. We define improvement as the percentage change in winning percentage over this period. Using endpoints rather than year-to-year fluctuations captures long-run improvement and aligns with the phrasing “between 2010 and 2014.”
+
+```{r}
+win_improvement_2010_2014 <- baseball %>%
+  filter(year %in% c(2010, 2014)) %>%     # keep endpoints only
+  select(team, year, win_pct) %>%
+  tidyr::pivot_wider(
+    names_from = year,
+    values_from = win_pct
+  ) %>%                                   # one row per team
+  mutate(
+    pct_gain_wins = ( `2014` - `2010` ) / `2010`
+  ) %>%
+  arrange(desc(pct_gain_wins))
+
+win_improvement_2010_2014
+```
+Answer: Between 2010 and 2014, the team(s) with the largest percentage gain in winning percentage were those at the top of the table above (Pittsburgh Pirates, Baltimore Orioles, Seattle Mariners being the top 3). These teams experienced the greatest relative improvement in on-field performance over the period.
+
+
+## Do log increases in payroll imply better performance? 
+
+Is there evidence to support the hypothesis that higher increases in payroll on the log scale lead to increased performance?
+
+Pick up a few statistics, accompanied with some data visualization, to support your answer. 
+
+We set up the analysis data set first:
+
+```{r}
+library(dplyr)
+library(ggplot2)
+
+analysis_df2 <- baseball_logdiff %>%
+  arrange(team, year) %>%
+  group_by(team) %>%
+  mutate(
+    d_win_pct = win_pct - lag(win_pct)
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(diff_log), !is.na(d_win_pct))
+
+analysis_df2
+```
+
+Answer: We will do a hypothesis testing where H0: β1 = 0 (no association), H1: β1 > 0 (higher payroll increases imply better performance)
+
+We first regress same-year winning percentage on the log payroll increase. This tests whether teams that increase payroll more tend to have higher winning percentages in the same season.
+
+```{r}
+model_level <- lm(win_pct ~ diff_log, data = analysis_df2)
+
+summary(model_level)
+confint(model_level, level = 0.95)
+```
+Answer: Since the 95% confidence interval on diff_log is [0.0219, 0.0713], we reject the null hypothesis and conclude that there is statistically significant evidence that teams that increase payroll more tend to have higher winning percentages in the same season. The estimated effect size implies that a one-unit increase in log payroll (approximately a 100% payroll increase) is associated with about a 4.7 percentage point increase in winning percentage. However, the model explains only about 2.8% of the variation in winning percentage, indicating that payroll changes account for only a small fraction of overall performance differences.
+
+This plot checks whether teams that increase payroll more (relative to last year) tend to have higher winning percentage in the same season. A smooth trend line helps reveal whether any relationship is systematic rather than noise.
+
+```{r}
+ggplot(analysis_df2, aes(x = diff_log, y = win_pct)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Winning Percentage vs Log Payroll Increase",
+    x = "diff_log = log(payroll_t) - log(payroll_{t-1})",
+    y = "win_pct"
+  )
+```
+
+We next regress the year-to-year change in winning percentage on the log payroll increase. This specification directly tests whether payroll growth is associated with improvement, rather than just being correlated with already-strong teams.
+
+```{r}
+model_change <- lm(d_win_pct ~ diff_log, data = analysis_df2)
+
+summary(model_change)
+confint(model_change, level = 0.95)
+```
+Answer: this time, since the 95% confidence interval of diff_log is [-0.0141, 0.03452] which includes 0, we failed to reject the null hypothesis so it suggests that there's no strong evidence that payroll growth is associated with improvement, rather than just being correlated with already-strong teams. 
+
+This plot tests whether payroll growth predicts improvement rather than just being associated with already-strong teams. A positive trend would support the hypothesis more directly.
+
+```{r}
+ggplot(analysis_df2, aes(x = diff_log, y = d_win_pct)) +
+  geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.6) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Change in Winning Percentage vs Log Payroll Increase",
+    x = "diff_log = log(payroll_t) - log(payroll_{t-1})",
+    y = "d_win_pct = win_pct_t - win_pct_{t-1}"
+  )
+```
+
+
+
+## Comparison
+
+Which set of factors are better explaining performance? Yearly payroll or yearly increase in payroll? What criterion is being used? 
+
+```{r}
+model_payroll_level <- lm(win_pct ~ log(payroll), data = baseball)
+
+summary(model_payroll_level)
+confint(model_payroll_level, level = 0.95)
+```
+Answer: Yearly payroll levels explain team performance substantially better than yearly payroll increases. Using explanatory power (R^2) as the primary criterion, payroll level explains approximately 14% of the variation in winning percentage, compared to less than 3% for payroll increases and essentially none for year-to-year improvement. At the 95% confidence level, the effect of payroll level on performance is highly statistically significant with a tight confidence interval, whereas payroll increases provide limited and unstable explanatory power. This suggests that sustained spending capacity, rather than short-run changes in payroll, is more informative about team success.
+
+## Using GAI to go one step beyond EDA
+
+You are encouraged to use Generative AI (GAI) (e.g., ChatGPT, Copilot) as an assistant for this question.
+
+Using the payroll and performance data, ask a GAI tool to suggest a reasonable way to study the relationship between payroll and team performance beyond simple plots, building on what we learned from EDA.
+
+Briefly address the following:
+
++ Process
+How did you use GAI to guide your analysis? What steps did you follow after EDA?
+Answer: After completing EDA including scatterplots and simple regressions, we used a GAI tool as an assistant to suggest ways to study the payroll–performance relationship more systematically. Guided by GAI, we translated visual patterns into formal statistical models that quantify associations and uncertainty. Specifically, we moved from plots to linear regression frameworks that (i) compare payroll levels and changes using the same outcome, (ii) report effect sizes and 95% confidence intervals, and (iii) use consistent transformations (log payroll) to ensure interpretability. All suggested approaches were implemented, checked, and interpreted by us to ensure full understanding and correctness.
+
++ What makes the analysis better than basic EDA?
+Explain what criteria you used to judge that this approach is an improvement (e.g., uses more information, reduces misleading aggregation, clearer comparison).
+1. Quantification of uncertainty: Regression provides standard errors and 95% confidence intervals, allowing us to assess whether observed relationships are statistically distinguishable from zero rather than relying on visual impressions.
+2. Clearer comparison: Using the same modeling framework for payroll levels and payroll increases enables a fair comparison based on explanatory power (e.g. R^2) and statistical significance.
+3. Reduced aggregation bias: By modeling at the team–year level and using log transformations, the analysis mitigates misleading effects driven by scale differences and outliers that can dominate raw plots.
+
++ Conclusion
+What do you learn about the relationship between payroll and performance? What are the limits of this conclusion?
+Answer: The extended analysis confirms that yearly payroll levels are strongly and statistically significantly associated with team performance, explaining substantially more variation in winning percentage than year-to-year payroll increases. Payroll increases show a positive association with same-year performance but do not reliably predict year-to-year improvement. These results suggest that sustained spending capacity reflects overall team quality more than short-run changes in payroll drive immediate gains.
+
+The conclusions are limited by the observational nature of the data: the analysis identifies associations, not causation, and may be affected by reverse causality, omitted variables (e.g., roster quality, injuries), and timing effects from multi-year contracts. Nonetheless, moving beyond plots to model-based inference provides clearer, more robust evidence about how payroll relates to performance.
+
+Notes:
+
++ GAI may only be used as an assistant.
++ You must understand and be able to explain all code and results you include.
++ There is no single correct answer; clarity and reasoning matter more than sophistication.
