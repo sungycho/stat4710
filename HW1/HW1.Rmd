@@ -426,19 +426,21 @@ a) How many fields are there in this data?
 ```{r}
 length(unique(women_data$Field))
 ```
+There are 10 fields.
 
 b) What are the degree types? 
 
 ```{r}
 unique(women_data$Degree)
 ```
+The degree types are BS, MS, PhD.
 
 c) How many year's statistics are being reported here? 
 
 ```{r}
 length(unique(women_data$Year))
 ```
-
+11 years.
 
 ## BS degrees in 2015
 
@@ -581,7 +583,7 @@ ggplot(all_vars, aes(x = Year, y = Total, fill = Sex)) +
   ) +
   theme_minimal()
 ```
-```{r}
+```{r, , warning=FALSE, message=FALSE}
 library(plotly)
 
 # Interactive visualization allowing year-by-year exploration
