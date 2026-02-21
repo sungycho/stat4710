@@ -51,3 +51,5 @@ rsconnect/
 #data folder
 data/
 
+#personal workspace
+personal/
