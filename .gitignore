@@ -52,4 +52,4 @@ rsconnect/
 data/
 
 #personal workspace
-personal/
+personal/*
