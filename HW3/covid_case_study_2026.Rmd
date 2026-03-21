@@ -506,6 +506,7 @@ lasso_cv <- cv.glmnet(X, y, alpha = 1,
                       nfolds = 10)
 plot(lasso_cv)
 ```
+
 State is forced into the model to control for state-level confounders such as differing policy responses, healthcare infrastructure, and reporting practices. Without controlling for State, these effects would be absorbed into the county-level coefficients and bias our estimates. We select lambda.1se which yields a simpler model with ~63 non-zero coefficients while not sacrificing much predictive performance compared to lambda.min.
 
 iv) Use a quick backward elimination to fine tune the LASSO model from iii). Again **force in State** in the process. 
@@ -554,6 +555,7 @@ suppressWarnings({
   plot(fit_final, 2)
 })
 ```
+
 The residuals vs fitted plot shows reasonably random scatter around zero, with no strong systematic pattern. However, a diagonal line of points at the bottom reflects counties with zero COVID deaths, since these counties all have the same response value of 0, the model cannot distinguish between them based on their predictors, resulting in a cluster of large negative residuals. These same counties likely drive the heavy left tail observed in the Q-Q plot. Overall, though not perfect, the linear model assumptions are reasonably met.
 
 vi) It has been shown that COVID affects elderly the most. It is also claimed that the COVID death rate among African Americans and Latinos is higher. Does your analysis support these arguments?
