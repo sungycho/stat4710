@@ -1,9 +1,9 @@
 ---
 title: " Modern Data Mining, HW 3"
 author:
-- Group Member 1
-- Group Member 2
-- Group Member 3
+- Sung Cho
+- Etienne Lee
+- Leo Li
 date: 'Due 11:59 pm, 03/22, 2026'
 output:
   html_document:
