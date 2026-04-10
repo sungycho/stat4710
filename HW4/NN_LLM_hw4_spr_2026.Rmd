@@ -28,8 +28,8 @@ knitr::opts_chunk$set(fig.height=4, fig.width=6, warning = F)
 if (!require("pacman")) install.packages("pacman")
 pacman::p_load(randomForest, tree, ISLR, rpart, rattle, pROC, partykit, ggplot2, glmnet, leaps, dplyr, keras3, neuralnet, imager, ranger, tensorflow)
 
-reticulate::use_condaenv('r')
-transformers <- reticulate::import("transformers")
+# reticulate::use_condaenv('r')
+# transformers <- reticulate::import("transformers")
 ```
 
 
@@ -636,6 +636,8 @@ Which binary model would you recommend for prediction, and why?
 
 
 
+
+
 # Part 3: Five-Class Models with Bag of Words
 
 In this Part, keep all five rating categories. Use the same train/test/validation split as above unless you explicitly state otherwise.
@@ -648,16 +650,46 @@ Because the bag-of-words representation contains many predictors, we will first 
 
 Write down the form of the multinomial logistic regression model for $K = 5$ classes.
 
+Let class 5 be the reference category. Then for \(k=1,2,3,4\),
+
+\[
+\log\left(\frac{P(Y=k\mid x)}{P(Y=5\mid x)}\right)=\beta_{k0}+x^\top \beta_k
+\]
+
+where \(x\) is the predictor vector and \(\beta_k\) is the coefficient vector for class \(k\).
+
+
 ### (b) Estimation
 
 Describe briefly how such a model is trained.
+A multinomial logistic regression model is trained by maximizing the multinomial likelihood using the training data. For each observation, the model estimates the probability of belonging to each of the five classes as a function of the predictors. The parameters are chosen to maximize the log-likelihood, which measures how well the predicted probabilities match the observed class labels. In practice, this optimization is performed using iterative numerical methods such as gradient descent or coordinate descent. When LASSO is applied, an L1 penalty is added to the log-likelihood to shrink coefficients and perform variable selection.
+
 
 ### (c) Fit the model
 
 Fit a multinomial LASSO model using cross-validation. Use `type.measure = "class"` or `type.measure = "deviance"`, but state your choice clearly and justify it.
 
 ```{r}
+library(glmnet)
 
+x_train_multi <- dtm_mat[train_idx, ]
+x_test_multi  <- dtm_mat[test_idx, ]
+
+# response (five classes)
+y_train_multi <- factor(yelp_data_1200$stars[train_idx])
+y_test_multi  <- factor(yelp_data_1200$stars[test_idx])
+
+set.seed(2025)
+
+fit.lasso.multi <- cv.glmnet(
+  x = x_train_multi,
+  y = y_train_multi,
+  family = "multinomial",
+  alpha = 1,
+  type.measure = "class"
+)
+
+plot(fit.lasso.multi)
 ```
 
 ### (d) Choice of lambda
@@ -665,29 +697,58 @@ Fit a multinomial LASSO model using cross-validation. Use `type.measure = "class
 Report `lambda.min` and `lambda.1se`. State which one you use for prediction and why.
 
 ```{r}
-
+cat("lambda.min:", fit.lasso.multi$lambda.min, "\n")
+cat("lambda.1se:", fit.lasso.multi$lambda.1se, "\n")
 ```
+lambda.min minimizes the cross-validation classification error, while lambda.1se is the largest value of λ within one standard error of the minimum. We use lambda.1se for prediction because it produces a sparser model with fewer words, improving stability and reducing overfitting in high-dimensional text data.
+
 
 ### (e) Selected words
 
 Extract the nonzero words at `lambda.1se`. Report how many words are selected, and briefly comment on why this screening step is useful before fitting a multinomial logistic regression model.
 
 ```{r}
+coef_multi <- coef(fit.lasso.multi, s = "lambda.1se")
 
+selected_words_multi <- unique(unlist(lapply(coef_multi, function(m) {
+  rownames(m)[m[,1] != 0]
+})))
+
+selected_words_multi <- setdiff(selected_words_multi, "(Intercept)")
+
+cat("Number of selected words:", length(selected_words_multi), "\n")
 ```
+Multinomial LASSO selects a subset of informative words by shrinking many coefficients to zero. This screening step is useful because the bag-of-words representation contains thousands of predictors, many of which are noisy or redundant. By reducing the feature set first, we make the subsequent multinomial logistic regression more stable and computationally efficient.
+
 
 ### (f) Test performance
 
 Report the testing mis-classification error, testing accuracy, and the confusion matrix.
 
 ```{r}
+pred_multi <- predict(
+  fit.lasso.multi,
+  newx = x_test_multi,
+  s = "lambda.1se",
+  type = "class"
+)
 
+pred_multi <- factor(pred_multi, levels = levels(y_test_multi))
+
+multi_acc <- mean(pred_multi == y_test_multi)
+multi_err <- 1 - multi_acc
+
+cat("Testing accuracy:", round(multi_acc,4), "\n")
+cat("Testing error:", round(multi_err,4), "\n")
+
+conf_mat_multi <- table(Predicted = pred_multi, Actual = y_test_multi)
+conf_mat_multi
 ```
 
 ### (g) Interpretation of mistakes
 
 Based on the confusion matrix, identify the most common misclassifications. Are errors concentrated in nearby classes such as 4 versus 5, or do you also see more severe errors such as 1 versus 5?
-
+The most common misclassifications are concentrated in nearby classes, especially between 4 and 5 stars and between 3 and 4 stars. For example, many true 4-star reviews are predicted as 5-star reviews, and some true 5-star reviews are predicted as 4-star reviews. The model also tends to push many reviews into the 5-star category, which is why the predicted 5 row is much larger than the others. More severe errors such as 1 versus 5 do occur, but they are much less common than the nearby-class mistakes. Overall, the confusion matrix suggests that the model captures broad sentiment direction reasonably well, but has difficulty separating adjacent rating levels.
 
 ## 3.2 Multinomial logistic regression after LASSO 
 
@@ -697,34 +758,94 @@ Analogous to binary logistic regression, we can build a multinomial logistic reg
 
 Write down the form of the multinomial logistic regression model for $K = 5$ classes.
 
+Let class 5 be the reference category. Then for \(k = 1,2,3,4\),
+
+\[
+\log\left(\frac{P(Y = k \mid x)}{P(Y = 5 \mid x)}\right)
+=
+\beta_{k0} + x^\top \beta_k
+\]
+
+where \(x\) is the predictor vector consisting of the words selected by multinomial LASSO, and \(\beta_k\) is the coefficient vector for class \(k\).
+
+Equivalently,
+
+\[
+P(Y = k \mid x)
+=
+\frac{\exp(\beta_{k0} + x^\top \beta_k)}
+{1 + \sum_{j=1}^{4} \exp(\beta_{j0} + x^\top \beta_j)},
+\quad k=1,2,3,4,
+\]
+
+and
+
+\[
+P(Y = 5 \mid x)
+=
+\frac{1}{1 + \sum_{j=1}^{4} \exp(\beta_{j0} + x^\top \beta_j)}.
+\]
+
+
 ### (b) Estimation
 
 Describe briefly how such a model is trained.
+This model is trained by maximizing the multinomial log-likelihood over the training data using only the words selected by multinomial LASSO. For each review, the model estimates the probabilities of the five rating classes as functions of the selected predictors, and the coefficients are chosen so that the observed ratings receive high predicted probability. Because there are more than two classes, the model simultaneously fits multiple log-odds equations relative to a reference class. In practice, the optimization is done numerically using iterative methods. Compared with fitting the full multinomial model on all words, using the LASSO-selected subset reduces dimensionality and makes estimation more stable.
 
 ### (c) Fit the model
 
 Use the words selected by multinomial LASSO to fit a multinomial logistic regression model.
 
 ```{r}
+library(nnet)
 
+# use the words selected by multinomial LASSO
+train_multi_glm <- data.frame(
+  stars = factor(yelp_data_1200$stars[train_idx]),
+  dtm_mat[train_idx, selected_words_multi, drop = FALSE]
+)
+
+test_multi_glm <- data.frame(
+  stars = factor(yelp_data_1200$stars[test_idx]),
+  dtm_mat[test_idx, selected_words_multi, drop = FALSE]
+)
+
+fit.multi.glm <- multinom(stars ~ ., data = train_multi_glm, trace = FALSE)
+fit.multi.glm
 ```
 
 ### (d) Inference package
 
 Find one R package that can provide coefficient inference for multinomial logistic regression, such as standard errors or p-values. State the package name and briefly describe how it can be used.
+One useful R package is nnet, which provides the multinom() function for fitting multinomial logistic regression. After fitting the model, calling summary(fit.multi.glm) returns the estimated coefficients and their standard errors for each non-reference class. These standard errors can then be used to compute approximate z-statistics and p-values manually by dividing each coefficient by its standard error and comparing to the standard normal distribution. Thus, nnet can be used not only for fitting the model but also for approximate coefficient inference.
 
 ### (e) Test performance
 
 Report the testing mis-classification error, testing accuracy, and the confusion matrix.
 
 ```{r}
+# predictions on the test set
+pred_multi_glm <- predict(fit.multi.glm, newdata = test_multi_glm)
 
+# accuracy
+test_accuracy_multi_glm <- mean(pred_multi_glm == test_multi_glm$stars)
+
+# misclassification error
+test_error_multi_glm <- 1 - test_accuracy_multi_glm
+
+# confusion matrix
+conf_mat_multi_glm <- table(Predicted = pred_multi_glm,
+                            Actual = test_multi_glm$stars)
+
+test_accuracy_multi_glm
+test_error_multi_glm
+conf_mat_multi_glm
 ```
 
 ### (f) Interpretation of mistakes
 
 From the confusion matrix, state which star levels are easiest to classify and which are hardest to classify.
-
+From the confusion matrix, 5-star reviews appear to be the easiest to classify, since the largest number of correct predictions occurs for the 5-star category (48 correct predictions). In contrast, 2-star and 3-star reviews appear to be harder to classify, as they have relatively fewer correct predictions and are often confused with nearby categories. Many of the mistakes occur between adjacent rating levels, such as 3 versus 4 or 4 versus 5, which suggests the model captures general sentiment but struggles to distinguish between similar levels of satisfaction.
 
 ## 3.3 Multiclass neural network
 
@@ -741,9 +862,16 @@ Describe a neural network with:
 
 Calculate the total number of trainable parameters.
 
-```{r}
+The multiclass neural network takes the 1,531-dimensional bag-of-words feature vector as input, passes it through two hidden layers with 20 neurons each and ReLU activation, and then uses a softmax output layer with 5 neurons to produce predicted probabilities for the five star classes. The ReLU activations allow the network to learn nonlinear relationships among the predictors, while the softmax layer ensures the five output probabilities sum to 1. The predicted class is the one with the highest softmax probability.
 
-```
+The total number of trainable parameters is
+
+\[
+(1531 \times 20 + 20) + (20 \times 20 + 20) + (20 \times 5 + 5)
+= 30640 + 420 + 105 = 31165.
+\]
+
+So the network has 31,165 trainable parameters in total.
 
 ### (b) Try a few architectures
 
@@ -759,23 +887,201 @@ For each architecture, report:
 - and testing error.
 
 ```{r}
+install.packages("keras3")
+library(keras3)
 
 ```
+
+```{r}
+library(keras3)
+library(dplyr)
+
+# inputs
+x_train_nn_multi <- x_train_multi
+x_test_nn_multi  <- x_test_multi
+x_val_nn_multi   <- dtm_mat[val_idx, ]
+
+y_train_nn_multi <- as.integer(factor(yelp_data_1200$stars[train_idx], levels = 1:5)) - 1L
+y_test_nn_multi  <- as.integer(factor(yelp_data_1200$stars[test_idx],  levels = 1:5)) - 1L
+y_val_nn_multi   <- as.integer(factor(yelp_data_1200$stars[val_idx],   levels = 1:5)) - 1L
+
+p_feat_multi <- ncol(x_train_nn_multi)
+
+# helper to build model
+build_multi_nn <- function(units1, units2 = NULL, dropout_rate = 0) {
+  model <- keras_model_sequential() |>
+    layer_dense(units = units1, activation = "relu", input_shape = c(p_feat_multi))
+  
+  if (!is.null(units2)) {
+    if (dropout_rate > 0) {
+      model <- model |> layer_dropout(rate = dropout_rate)
+    }
+    model <- model |>
+      layer_dense(units = units2, activation = "relu")
+  }
+  
+  if (is.null(units2) && dropout_rate > 0) {
+    model <- model |> layer_dropout(rate = dropout_rate)
+  }
+  
+  model |>
+    layer_dense(units = 5, activation = "softmax")
+}
+
+# architectures to compare
+arch_grid <- list(
+  list(name = "NN1", hidden_layers = 1, units = c(20),    dropout = 0.0),
+  list(name = "NN2", hidden_layers = 2, units = c(20,20), dropout = 0.0),
+  list(name = "NN3", hidden_layers = 2, units = c(30,20), dropout = 0.1),
+  list(name = "NN4", hidden_layers = 1, units = c(30),    dropout = 0.1)
+)
+
+results_nn_multi <- data.frame()
+
+for (spec in arch_grid) {
+  set.seed(2025)
+  
+  model <- build_multi_nn(
+    units1 = spec$units[1],
+    units2 = if (length(spec$units) == 2) spec$units[2] else NULL,
+    dropout_rate = spec$dropout
+  )
+  
+  model |> compile(
+    optimizer = optimizer_adam(),
+    loss = "sparse_categorical_crossentropy",
+    metrics = c("accuracy")
+  )
+  
+  history <- model |> fit(
+    x = x_train_nn_multi,
+    y = y_train_nn_multi,
+    epochs = 40,
+    batch_size = 32,
+    validation_data = list(x_val_nn_multi, y_val_nn_multi),
+    verbose = 0
+  )
+  
+  val_acc_hist <- history$metrics$val_accuracy
+  best_epoch <- which.max(val_acc_hist)
+  
+  # refit model using chosen epoch on train + validation combined
+  x_trainval <- rbind(x_train_nn_multi, x_val_nn_multi)
+  y_trainval <- c(y_train_nn_multi, y_val_nn_multi)
+  
+  final_model <- build_multi_nn(
+    units1 = spec$units[1],
+    units2 = if (length(spec$units) == 2) spec$units[2] else NULL,
+    dropout_rate = spec$dropout
+  )
+  
+  final_model |> compile(
+    optimizer = optimizer_adam(),
+    loss = "sparse_categorical_crossentropy",
+    metrics = c("accuracy")
+  )
+  
+  final_model |> fit(
+    x = x_trainval,
+    y = y_trainval,
+    epochs = best_epoch,
+    batch_size = 32,
+    verbose = 0
+  )
+  
+  pred_probs <- predict(final_model, x_test_nn_multi, verbose = 0)
+  pred_class <- apply(pred_probs, 1, which.max) - 1L
+  
+  test_acc <- mean(pred_class == y_test_nn_multi)
+  test_err <- 1 - test_acc
+  
+  results_nn_multi <- rbind(
+    results_nn_multi,
+    data.frame(
+      model = spec$name,
+      hidden_layers = spec$hidden_layers,
+      neurons_per_layer = paste(spec$units, collapse = ", "),
+      dropout = spec$dropout,
+      selected_epoch = best_epoch,
+      testing_accuracy = round(test_acc, 4),
+      testing_error = round(test_err, 4)
+    )
+  )
+}
+
+results_nn_multi
+```
+
 
 ### (c) Final multiclass NN
 
 Choose one architecture as your final multiclass neural network model. Explain why you selected it.
 
 ```{r}
+# best row from your comparison table
+best_spec <- results_nn_multi[which.max(results_nn_multi$testing_accuracy), ]
+best_spec
 
+# create best_units from the text in neurons_per_layer
+best_units <- as.numeric(strsplit(as.character(best_spec$neurons_per_layer), ",\\s*")[[1]])
+
+best_dropout <- best_spec$dropout
+best_epoch <- best_spec$selected_epoch
+
+# combine training and validation
+x_trainval_nn_multi <- rbind(x_train_nn_multi, x_val_nn_multi)
+y_trainval_nn_multi <- c(y_train_nn_multi, y_val_nn_multi)
+
+# refit final model
+fit.nn.multi <- build_multi_nn(
+  units1 = best_units[1],
+  units2 = if (length(best_units) > 1) best_units[2] else NULL,
+  dropout_rate = best_dropout
+)
+
+fit.nn.multi |> compile(
+  optimizer = optimizer_adam(),
+  loss = "sparse_categorical_crossentropy",
+  metrics = c("accuracy")
+)
+
+fit.nn.multi |> fit(
+  x = x_trainval_nn_multi,
+  y = y_trainval_nn_multi,
+  epochs = best_epoch,
+  batch_size = 32,
+  verbose = 0
+)
 ```
+I selected NN1 as the final multiclass neural network because it achieved the highest testing accuracy (0.620) and lowest testing error (0.380) among the architectures considered. This model uses one hidden layer with 20 neurons, no dropout, and 8 epochs. I chose it because it performed best while also being the simplest architecture in the comparison.
+
 
 ### (d) Test performance
 
 Report the testing misclassification error, testing accuracy, and the confusion matrix of your chosen multiclass NN.
 
 ```{r}
+# predict on the test set
+pred_probs_multi_nn <- predict(fit.nn.multi, x_test_nn_multi, verbose = 0)
+pred_class_multi_nn <- apply(pred_probs_multi_nn, 1, which.max)
 
+# true labels as 1,2,3,4,5
+true_class_multi_nn <- y_test_nn_multi + 1
+
+# accuracy and error
+nn_multi_acc <- mean(pred_class_multi_nn == true_class_multi_nn)
+nn_multi_err <- 1 - nn_multi_acc
+
+cat("Testing accuracy:", round(nn_multi_acc, 4), "\n")
+cat("Testing misclassification error:", round(nn_multi_err, 4), "\n")
+
+# confusion matrix
+conf_mat_multi_nn <- table(
+  Predicted = factor(pred_class_multi_nn, levels = 1:5),
+  Actual = factor(true_class_multi_nn, levels = 1:5)
+)
+
+conf_mat_multi_nn
 ```
 
 ## 3.4 Best bag-of-words model for five classes
@@ -793,13 +1099,40 @@ Create one table comparing the models. Include at least:
 - and one sentence on strengths / weaknesses.
 
 ```{r}
+comparison_multi <- data.frame(
+  model_name = c("Multinomial LASSO",
+                 "Multinomial Logistic Regression after LASSO",
+                 "Multiclass Neural Network"),
+  main_tuning_choice = c(
+    "lambda.1se from cross-validation",
+    "Words selected by multinomial LASSO",
+    paste0("Best architecture from 3.3(b): ",
+           best_spec$model, ", epoch = ", best_epoch)
+  ),
+  testing_error = c(
+    round(multi_err, 4),
+    round(test_error_multi_glm, 4),
+    round(nn_multi_err, 4)
+  ),
+  testing_accuracy = c(
+    round(multi_acc, 4),
+    round(test_accuracy_multi_glm, 4),
+    round(nn_multi_acc, 4)
+  ),
+  strengths_weaknesses = c(
+    "Sparse and interpretable, but accuracy is lower and it tends to over-shrink coefficients.",
+    "More flexible after screening and still interpretable, but less stable and more prone to confusion across nearby classes.",
+    "Best predictive performance here and captures nonlinear patterns, but is the least interpretable."
+  )
+)
 
+knitr::kable(comparison_multi, caption = "Five-Class Bag-of-Words Model Comparison")
 ```
 
 ### (b) Recommendation
 
 Which bag-of-words model would you recommend for the five-class problem? Explain your choice.
-
+I would recommend the multiclass neural network for the five-class bag-of-words problem. Among the three models, it achieves the highest testing accuracy (0.615) and the lowest testing error (0.385), so it performs best as a predictor on unseen data. The multinomial LASSO is more interpretable, but its accuracy is noticeably lower, and the multinomial logistic regression after LASSO performs worst of the three. Since the goal here is prediction across five rating categories, the neural network offers the best balance in terms of predictive performance, even though it is less interpretable than the regression-based alternatives.
 
 # Part 4: Transformer-Based Models with LLMs
 
