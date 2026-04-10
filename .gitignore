@@ -53,3 +53,8 @@ data/
 
 #personal workspace
 personal/*
+
+sketch.md
+
+HW4/yelp_review_20k.json
+HW4/yelp_review_1200.json
