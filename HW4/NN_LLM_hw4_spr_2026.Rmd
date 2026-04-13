@@ -25,11 +25,12 @@ urlcolor: blue
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(fig.height=4, fig.width=6, warning = F)
+Sys.setenv(KERAS_BACKEND = "torch")
+reticulate::use_condaenv('r')
 if (!require("pacman")) install.packages("pacman")
-pacman::p_load(randomForest, tree, ISLR, rpart, rattle, pROC, partykit, ggplot2, glmnet, leaps, dplyr, keras3, neuralnet, imager, ranger, tensorflow)
-
-# reticulate::use_condaenv('r')
-# transformers <- reticulate::import("transformers")
+pacman::p_load(randomForest, tree, ISLR, rpart, rattle, pROC, partykit, ggplot2, glmnet, leaps, dplyr, neuralnet, imager, ranger)
+library(keras3)
+transformers <- reticulate::import("transformers")
 ```
 
 
@@ -285,20 +286,6 @@ Your answer must report at least:
 You can also visualize this by creating a simple bar chart comparing the number of zero versus nonzero entries is sufficient.
 
 ```{r}
-# Hint:
-##options(scipen = 999)
-# ncell_all <- nrow(dtm_all) * ncol(dtm_all)
-# nnzero_all <- length(dtm_all$v)
-# sparsity_plot_data <- data.frame(
-#   entry_type = c("zero", "nonzero"),
-#   count = c(ncell_all - nnzero_all, nnzero_all)
-# )
-# ggplot(sparsity_plot_data, aes(x = entry_type, y = count, fill = entry_type)) +
-#   geom_col() +
-#   labs(title = "Zero vs Nonzero Entries in the Full 20k DTM", x = NULL, y = "Count") +
-#   theme_minimal()
-```
-```{r}
 library(jsonlite)
 library(tm)
 library(ggplot2)
@@ -377,9 +364,31 @@ Go through the similar process of cleansing as we did in the lecture.
 - Follow a cleaning process similar to the one used in lecture.
 - For each step, briefly explain what it does and why it is used.
 
-```{r}
 
+```{r}
+library(tm)
+
+# Build corpus from 1200 reviews
+corp_1200 <- VCorpus(VectorSource(yelp_data_1200$text))
+
+# Step 1: Lowercase — "Great" and "great" should be the same token.
+corp_1200 <- tm_map(corp_1200, content_transformer(tolower))
+
+# Step 2: Remove punctuation — punctuation carries no bag-of-words signal.
+corp_1200 <- tm_map(corp_1200, removePunctuation)
+
+# Step 3: Remove numbers — standalone digits are rarely informative for sentiment.
+corp_1200 <- tm_map(corp_1200, removeNumbers)
+
+# Step 4: Remove stop words — high-frequency function words (the, and, is)
+#          are near-universal across documents and add noise, not signal.
+corp_1200 <- tm_map(corp_1200, removeWords, stopwords("en"))
+
+# Step 5: Strip extra whitespace — the removal steps leave gaps; this cleans them.
+corp_1200 <- tm_map(corp_1200, stripWhitespace)
 ```
+
+Each step reduces noise so that the numeric DTM captures meaningful content words. Lowercasing and punctuation removal avoid spurious duplicate tokens, while stop-word removal and number removal focus the vocabulary on semantically informative terms.
 
 ### (b) DTM construction
 
@@ -390,9 +399,24 @@ Create the DTM after preprocessing. Then, report
 - and the exact sparsity of the reduced DTM.
 
 ```{r}
+# Full DTM before any filtering
+dtm_full_1200 <- DocumentTermMatrix(corp_1200)
+cat("Full DTM dimensions:", dim(dtm_full_1200), "\n")
 
+# Reduced DTM: keep terms appearing in >= 0.5% of documents
+# 0.5% of 1200 = 6 documents → removeSparseTerms with sparse = 0.995
+dtm_1200 <- removeSparseTerms(dtm_full_1200, 0.995)
+cat("Reduced DTM dimensions:", dim(dtm_1200), "\n")
+
+# Exact sparsity of the reduced DTM
+ncell_1200 <- nrow(dtm_1200) * ncol(dtm_1200)
+nzero_1200 <- length(dtm_1200$v)
+sparsity_1200 <- (ncell_1200 - nzero_1200) / ncell_1200
+cat("Sparsity of reduced DTM:", round(sparsity_1200, 6), "\n")
 ```
 
+The full DTM (before sparsity filtering) has 1,200 documents × 10,027 terms. After applying the 0.5% rule (keeping only terms appearing in at least 6 of 1,200 reviews), the reduced DTM has 1,200 documents × 1,531 terms. The sparsity of the reduced DTM is 0.9755, meaning about 97.55% of entries are zero — still very sparse, but substantially reduced from the full vocabulary.
+  
 ### (c) Interpreting the DTM
 
 Briefly explain what the DTM records. Then inspect the entry in row 100 and column 405 of your reduced DTM.
@@ -405,8 +429,18 @@ Your answer may include:
 - and what that value means in words.
 
 ```{r}
+dtm_mat <- as.matrix(dtm_1200)
 
+cell_value <- dtm_mat[100, 405]
+term_name  <- colnames(dtm_mat)[405]
+
+cat("Document index : 100\n")
+cat("Term in col 405:", term_name, "\n")
+cat("Cell value      :", cell_value, "\n")
+cat("Interpretation  : The word '", term_name, "' appears ",
+    cell_value, " time(s) in review #100.\n", sep = "")
 ```
+Answer: The DTM records word counts: each row is a review and each column is a vocabulary term. The value in cell (i, j) is how many times term j appears in review i. For row 100 and column 405, the term is "employee" and the cell value is 0, meaning the word "employee" does not appear at all in review #100.
 
 
 ### (d) From text to modeling data
@@ -420,8 +454,17 @@ You must:
 - and report the class counts.
 
 ```{r}
+sentiment <- ifelse(yelp_data_1200$stars %in% c(4, 5), "good", "bad")
+sentiment <- factor(sentiment, levels = c("bad", "good"))
 
+modeling_data <- cbind(sentiment = sentiment, as.data.frame(dtm_mat))
+
+cat("Class counts:\n")
+print(table(modeling_data$sentiment))
 ```
+Answer: We define good = {4, 5 stars} and bad = {1, 2, 3 stars}. Four- and five-star reviews represent clear positive sentiment, while one- through three-star reviews reflect dissatisfaction or at best a lukewarm experience. This threshold aligns with common Yelp interpretation conventions and produces the most natural positive/negative division.
+Of the 1,200 reviews, 771 (64.3%) are good and 429 (35.8%) are bad — moderately imbalanced, reflecting the positive skew in the full dataset. A naive classifier that always predicts "good" would already achieve ~64% accuracy, so models need to meaningfully exceed that baseline to demonstrate value.
+
 
 ## 2.2 Train / test / validation split
 
@@ -434,9 +477,18 @@ Use a reproducible split with:
 
 ### (a) Create the split
 
-
 ```{r}
+set.seed(2025)
+n       <- nrow(modeling_data)
+idx_all <- sample(seq_len(n))
 
+train_idx <- idx_all[1:900]
+test_idx  <- idx_all[901:1100]
+val_idx   <- idx_all[1101:1200]
+
+train_data <- modeling_data[train_idx, ]
+test_data  <- modeling_data[test_idx,  ]
+val_data   <- modeling_data[val_idx,   ]
 ```
 
 ### (b) Check balance
@@ -444,8 +496,12 @@ Use a reproducible split with:
 Report the class counts for the training, testing, and validation sets. Report briefly on whether the split appears reasonably balanced.
 
 ```{r}
-
+cat("Training set:\n");   print(table(train_data$sentiment))
+cat("Testing set:\n");    print(table(test_data$sentiment))
+cat("Validation set:\n"); print(table(val_data$sentiment))
 ```
+  All three splits maintain roughly the same 36%/64% bad/good ratio as the full 1,200-review dataset, so the random split is well-stratified. The training set has 325 bad and 575 good, testing has 66 bad and 134 good, and validation has 38 bad and 62 good. The moderate class imbalance (~36% bad, ~64% good) is consistent across all splits, meaning no single split is unusually skewed relative to the others. 
+
 
 ## 2.3 Binary LASSO
 
@@ -456,16 +512,31 @@ Use the training data to fit a LASSO model for the binary outcome. Label the fit
 Use cross-validation and choose `lambda.1se` for the final binary LASSO model. State the family used and explain why it is appropriate.
 
 ```{r}
+x_train <- as.matrix(train_data[, -1])
+y_train  <- train_data$sentiment
 
+set.seed(2025)
+fit.lasso <- cv.glmnet(x_train, y_train,
+                       family       = "binomial",
+                       alpha        = 1,
+                       type.measure = "class")
+plot(fit.lasso)
 ```
+
+Answer: We use `family = "binomial"` because the outcome is a binary factor (good vs. bad). Binomial logistic regression is the canonical model for binary classification, and glmnet applies LASSO penalization to its log-odds coefficients.
+
 
 ### (b) Tuning summary
 
 Report the values of `lambda.min` and `lambda.1se`. Briefly explain why `lambda.1se` is often preferred in this setting.
 
 ```{r}
-
+cat("lambda.min:", fit.lasso$lambda.min, "\n")
+cat("lambda.1se:", fit.lasso$lambda.1se, "\n")
 ```
+
+lambda.min = 0.00159 is the penalty that minimizes cross-validation error, retaining more predictors but risking overfitting. lambda.1se = 0.01071 is the largest penalty within one standard error of the minimum, producing a sparser model with fewer selected words. We use lambda.1se for the final model because it favors parsimony — in a high-dimensional text setting with many correlated words, the extra regularization reduces variance without a meaningful loss in predictive accuracy.  
+  
 
 ### (c) Selected words
 
@@ -478,9 +549,26 @@ Report:
 - and the top 10 negative words.
 
 ```{r}
+coef_lasso <- coef(fit.lasso, s = "lambda.1se")
+coef_df    <- data.frame(word = rownames(coef_lasso),
+                         coef = as.numeric(coef_lasso),
+                         stringsAsFactors = FALSE)
 
+# Remove intercept and zero-coefficient terms
+coef_nonzero <- subset(coef_df, word != "(Intercept)" & coef != 0)
+
+cat("Number of nonzero coefficients (excluding intercept):", nrow(coef_nonzero), "\n\n")
+
+cat("Top 10 positive words:\n")
+print(head(coef_nonzero[order(-coef_nonzero$coef), ], 10))
+
+cat("\nTop 10 negative words:\n")
+print(head(coef_nonzero[order(coef_nonzero$coef), ], 10))
 ```
 
+At lambda.1se, the LASSO selects 261 nonzero coefficients (excluding the intercept). The top positive words — such as "thank", "amazing", and "delicious" — are strongly associated with good reviews, reflecting praise for food quality and overall satisfaction. The top negative words — such as "disappointment", "horrible", and "awful" — are strongly associated with bad reviews, capturing direct expressions of dissatisfaction. A few unexpected words appear, such as "fat", "airport", and "ton", which may reflect idiosyncratic patterns in this small subset rather than genuine sentiment signals.                         
+
+      
 ## 2.4 Relaxed model: logistic regression after LASSO
 
 Use the words selected by LASSO to fit a logistic regression model. Label this model as `fit.glm`.
@@ -490,7 +578,10 @@ Use the words selected by LASSO to fit a logistic regression model. Label this m
 Fit a logistic regression using only the LASSO-selected predictors.
 
 ```{r}
+selected_words <- coef_nonzero$word
 
+train_glm <- train_data[, c("sentiment", selected_words)]
+fit.glm   <- glm(sentiment ~ ., data = train_glm, family = "binomial")
 ```
 
 ### (b) Positive coefficients and interpretation
@@ -498,33 +589,59 @@ Fit a logistic regression using only the LASSO-selected predictors.
 Pull out all positive coefficients from `fit.glm`, rank them in decreasing order, and report the leading 2 words and their coefficients. Interpret those two coefficients briefly.
 
 ```{r}
-
+coef_glm <- coef(fit.glm)
+pos_coef  <- sort(coef_glm[coef_glm > 0 & names(coef_glm) != "(Intercept)"],
+                  decreasing = TRUE)
+cat("Top 2 positive words:\n")
+print(head(pos_coef, 2))
 ```
 
+The top two positive words are "flavored" (coef = 110.17) and "favorites" (coef = 87.52). These are log-odds coefficients from an unpenalized logistic regression, so the magnitudes are much larger than LASSO. Each additional occurrence of "flavored" increases the log-odds of a good rating by 110.17, and "favorites" by 87.52. However, coefficients this large typically indicate near-perfect separation — these words likely appear almost exclusively in good reviews within the training data, causing the GLM to push coefficients to extreme values rather than reflecting a reliable population-level signal.                      
+   
+   
 ### (c) Positive word cloud
 
 Create a word cloud using the top 100 positive words ranked by coefficient. Write a short interpretation.
 
 ```{r}
+pacman::p_load(wordcloud, RColorBrewer)
 
+top100_pos <- head(pos_coef, 100)
+wordcloud(words = names(top100_pos), freq = top100_pos,
+          scale = c(4, 0.4), min.freq = 0,
+          colors = brewer.pal(8, "Blues"),
+          random.order = FALSE)
+title("Positive Word Cloud (Binary Logistic)")
 ```
-
+Answer: The positive word cloud is dominated by "favorites" and "flavored", consistent with their large logistic regression coefficients. Other prominent words include "cover", "issues", "gem", "ball", and "refreshing", which reflect positive experiences with food quality and overall satisfaction. The cloud captures words that reviewers tend to use when recommending a place, though some words like "issues" and "mixed" appear unexpectedly — these likely reflect edge cases where the word co-occurs with positive context in the training data.                                                                                
 ### (d) Negative coefficients and interpretation
 
 Repeat part (b) for the words with negative estimated coefficients. Rank them from most negative upward, report the top 2 words, and briefly interpret their coefficients.
 
 ```{r}
-
+neg_coef <- sort(coef_glm[coef_glm < 0 & names(coef_glm) != "(Intercept)"])
+cat("Top 2 negative words:\n")
+print(head(neg_coef, 2))
 ```
 
+The top two negative words are "disappointment" (coef = −105.25) and "passed" (coef = −99.21). Each additional occurrence of "disappointment" decreases the log-odds of a good rating by 105.25, and "passed" by 99.21. As with the positive coefficients, the extreme magnitudes indicate near-perfect separation — these words appear almost exclusively in bad reviews within the training data, causing the unpenalized GLM to assign very large negative values. "Disappointment" is an intuitive negative signal, while "passed" likely appears in phrases like "passed on" or "passed up", expressing regret or avoidance.                    
+   
+   
 ### (e) Negative word cloud
 
 Using the negative-coefficient words from fit.glm, create a word cloud of the top 100 words ranked by the absolute value of their coefficients. Briefly interpret the main pattern in the word cloud.
 
 ```{r}
-
+top100_neg <- head(sort(abs(neg_coef), decreasing = TRUE), 100)
+wordcloud(words = names(top100_neg), freq = top100_neg,
+          scale = c(4, 0.4), min.freq = 0,
+          colors = brewer.pal(8, "Reds"),
+          random.order = FALSE)
+title("Negative Word Cloud (Binary Logistic)")
 ```
 
+Answer: The negative word cloud is dominated by "passed", "vegetables", and "satisfying", with other prominent words including "rent", "awful", "salty", "rude", and "airport". Most of these align with clear dissatisfaction — "awful", "rude", and "salty" are direct negative signals. However, words like "vegetables", "satisfying", and "plenty" appearing in the negative cloud suggest the same near-perfect separation issue seen in the coefficients — these words likely co-occur with negative context in just a handful of training reviews, causing the unpenalized GLM to overfit to those patterns rather than capturing genuine sentiment. 
+  
 ### (f) Short comparison of LASSO and logistic regression
 
 In 10 sentences, explain the main differences between:
@@ -532,16 +649,35 @@ In 10 sentences, explain the main differences between:
 - using LASSO directly for prediction, and
 - using LASSO for variable selection followed by logistic regression.
 
+LASSO directly for prediction shrinks all coefficients simultaneously using a penalized likelihood, and the $\ell_1$ penalty drives many coefficients exactly to zero, performing variable selection and estimation in one step. In our binary LASSO, 261 words were retained out of 1,531, with coefficients that are visibly shrunk — the top positive word "thank" had a coefficient of only 1.23, a plausible and interpretable magnitude. Using LASSO for variable selection followed by logistic regression separates the two tasks: LASSO first selects the 261 words, then an unpenalized GLM is fit on only those predictors. Because the second step has no regularization, the logistic regression coefficients are free to grow very large, as seen with "flavored" at 110.17 and "disappointment" at −105.25 — magnitudes far beyond what LASSO would ever produce. These extreme values indicate near-perfect separation, where certain words appear almost exclusively in good or bad reviews in the training data, and the GLM exploits this completely. This makes the two-step model less stable and harder to interpret, despite being based on the same 261 selected words. In terms of prediction, both models classify using a 0.5 probability threshold, so the extreme coefficients in the GLM may not hurt accuracy much but do undermine coefficient interpretability. LASSO coefficients, by contrast, are deliberately shrunk and better reflect the relative importance of words in a way that generalizes more reliably. One practical advantage of the two-step approach is that the GLM output includes standard errors and p-values, enabling formal inference on individual word effects — something LASSO does not provide. However, given the separation problem observed here, those standard errors would be unreliable anyway. Overall, LASSO is the more stable and interpretable choice for this text classification task, while the two-step approach is more appropriate when the selected predictor set is small, well-conditioned, and formal inference is needed.
+
 ### (g) Testing error comparison
 Using majority-vote classification, compute the testing misclassification error for fit.lasso and fit.glm. State which model has the smaller testing error.
 
 ```{r}
+x_test <- as.matrix(test_data[, -1])
 
+# LASSO: predict class directly
+pred_lasso_class <- predict(fit.lasso, newx = x_test, s = "lambda.1se", type = "class")
+pred_lasso_class <- factor(pred_lasso_class, levels = c("bad", "good"))
+lasso_err_g <- mean(pred_lasso_class != test_data$sentiment)
+cat("LASSO testing misclassification error:", round(lasso_err_g, 4), "\n")
+
+# Logistic regression: predict probability, threshold at 0.5
+test_glm     <- test_data[, c("sentiment", selected_words)]
+pred_glm_prob <- predict(fit.glm, newdata = test_glm, type = "response")
+pred_glm_class <- factor(ifelse(pred_glm_prob > 0.5, "good", "bad"), levels = c("bad", "good"))
+glm_err_g <- mean(pred_glm_class != test_data$sentiment)
+cat("Logistic regression testing misclassification error:", round(glm_err_g, 4), "\n")
+
+cat("\nModel with smaller testing error:",
+    ifelse(lasso_err_g <= glm_err_g, "LASSO", "Logistic Regression"), "\n")
 ```
-
+Using majority-vote classification at the 0.5 threshold, the LASSO achieves a testing misclassification error of 0.175 (82.5% accuracy) while logistic regression achieves 0.275 (72.5% accuracy). LASSO has the smaller testing error by a margin of 10 percentage points. This is consistent with the separation problem observed in the GLM — the extreme coefficients caused by near-perfect separation likely hurt generalization, whereas LASSO's shrinkage provides better regularization and more stable predictions on unseen data.                                                                                              
 ## 2.5 Binary neural network
 
 Construct a neural network for the same binary outcome.
+
 
 ### (a) Architecture
 
@@ -555,9 +691,23 @@ Specify a neural network with:
 Explain at a high level what the model is doing and calculate the total number of trainable parameters.
 
 ```{r}
+p_feat <- ncol(x_train)  # number of DTM features
 
+model_bin_init <- keras_model_sequential() |>
+  layer_dense(units = 20, activation = "relu", input_shape = c(p_feat)) |>
+  layer_dense(units = 2,  activation = "softmax")
+
+summary(model_bin_init)
+
+cat("\nManual parameter count:", 20 * (p_feat + 1) + 2 * (20 + 1), "\n")
 ```
+The network takes the 1,531-dimensional DTM word-count vector as input, passes it through a hidden layer of 20 neurons with ReLU activation (zeroing out negative pre-activations to introduce nonlinearity), then produces two output probabilities summing to 1 via softmax — one for "bad" and one for "good". The class with higher probability is the predicted label.
 
+Total trainable parameters confirmed at 30,682:
+  - Hidden layer: $1{,}531 \times 20 + 20 = 30{,}640$ (weights + biases)                  
+  - Output layer: $20 \times 2 + 2 = 42$ (weights + biases) 
+  - Total: $30{,}640 + 42 = 30{,}682$    
+  
 ### (b) Initial training
 
 Train the model on the training data using:
@@ -569,7 +719,23 @@ Train the model on the training data using:
 Save the training history.
 
 ```{r}
+# Encode response as integer: 0 = bad, 1 = good
+y_train_nn <- as.integer(train_data$sentiment) - 1L
 
+model_bin_init |> compile(
+  optimizer = optimizer_adam(),
+  loss      = "sparse_categorical_crossentropy",
+  metrics   = c("accuracy")
+)
+
+history_bin <- model_bin_init |> fit(
+  x                = x_train,
+  y                = y_train_nn,
+  epochs           = 50,
+  batch_size       = 32,
+  validation_split = 0.15,
+  verbose          = 0
+)
 ```
 
 ### (c) Choose the epoch
@@ -577,16 +743,54 @@ Save the training history.
 Use the training and validation curves to choose an appropriate epoch. Include at least one plot and justify your choice.
 
 ```{r}
-
+hist_df <- data.frame(           
+  epoch       = seq_along(history_bin$metrics$loss),                      
+  train_loss  = history_bin$metrics$loss,                  
+  val_loss    = history_bin$metrics$val_loss,               
+  train_acc   = history_bin$metrics$accuracy,             
+  val_acc     = history_bin$metrics$val_accuracy                                                              
+)                                                                                                                                                          
+ggplot(hist_df, aes(x = epoch)) +
+  geom_line(aes(y = train_loss, color = "Train Loss")) +         
+  geom_line(aes(y = val_loss,   color = "Val Loss")) +                                                               
+  labs(title = "Training vs Validation Loss", y = "Loss", color = "") +
+  theme_minimal()                              
+                                                          
+ggplot(hist_df, aes(x = epoch)) +      
+  geom_line(aes(y = train_acc, color = "Train Accuracy")) +
+  geom_line(aes(y = val_acc,   color = "Val Accuracy")) +
+  labs(title = "Training vs Validation Accuracy", y = "Accuracy", color = "") +                                              
+  theme_minimal()
 ```
 
+The training accuracy reaches 1.0 within the first few epochs, indicating that the model has completely memorized the training data. Meanwhile, the validation accuracy peaks at approximately 0.82 around epoch 5 and then gradually declines to ~0.80 by epoch 50, signaling increasing overfitting. We select epoch 5 as the optimal stopping point — it is where validation accuracy is highest before the train-validation gap begins to widen. The overfitting is expected given the high dimensionality of the DTM (1,531 features) relative to the training size (900 reviews) and the large number of model parameters (30,682).             
+  
 ### (d) Final binary NN fit
 
 Refit the neural network using the selected epoch and call the final fitted object `fit.nn`.
 
 ```{r}
+chosen_epoch_bin <- 20
 
+fit.nn <- keras_model_sequential() |>
+  layer_dense(units = 20, activation = "relu", input_shape = c(p_feat)) |>
+  layer_dense(units = 2,  activation = "softmax")
+
+fit.nn |> compile(
+  optimizer = optimizer_adam(),
+  loss      = "sparse_categorical_crossentropy",
+  metrics   = c("accuracy")
+)
+
+fit.nn |> fit(
+  x          = x_train,
+  y          = y_train_nn,
+  epochs     = chosen_epoch_bin,
+  batch_size = 32,
+  verbose    = 0
+)
 ```
+
 
 ## 2.6 Binary model evaluation
 
@@ -597,24 +801,51 @@ Evaluate all three binary models on the same testing data.
 Using majority vote classification, report the testing mis-classification error and testing accuracy for `fit.lasso`.
 
 ```{r}
+pred_lasso_test <- predict(fit.lasso, newx = x_test, s = "lambda.1se", type = "class")
+pred_lasso_test <- factor(pred_lasso_test, levels = c("bad", "good"))
 
+lasso_acc <- mean(pred_lasso_test == test_data$sentiment)
+lasso_err <- 1 - lasso_acc
+cat("LASSO test misclassification error:", round(lasso_err, 4), "\n")
+cat("LASSO test accuracy:               ", round(lasso_acc, 4), "\n")
 ```
 
+The LASSO model achieves a testing misclassification error of 0.175 and a testing accuracy of 82.5%, correctly classifying 165 out of 200 test reviews. This comfortably exceeds the naive baseline of ~64% (always predicting "good"), confirming that the LASSO-selected words carry genuine predictive signal.
+  
 ### (b) Logistic test performance
 
 Using majority vote classification, report the testing mis-classification error and testing accuracy for `fit.glm`.
 
 ```{r}
+test_glm      <- test_data[, c("sentiment", selected_words)]
+pred_glm_prob  <- predict(fit.glm, newdata = test_glm, type = "response")
+pred_glm_test  <- factor(ifelse(pred_glm_prob > 0.5, "good", "bad"), levels = c("bad", "good"))
 
+glm_acc <- mean(pred_glm_test == test_data$sentiment)
+glm_err <- 1 - glm_acc
+cat("Logistic regression test misclassification error:", round(glm_err, 4), "\n")
+cat("Logistic regression test accuracy:               ", round(glm_acc, 4), "\n")
 ```
 
+The logistic regression model achieves a testing misclassification error of 0.275 and a testing accuracy of 72.5%, correctly classifying 145 out of 200 test reviews. This is 10 percentage points worse than LASSO, consistent with the near-perfect separation problem observed in the coefficients — the extreme GLM estimates hurt generalization on unseen data.
+    
+    
 ### (c) Neural-network test performance
 
 Using majority vote classification, report the testing mis-classification error and testing accuracy for `fit.nn`.
 
 ```{r}
+pred_nn_probs  <- predict(fit.nn, x_test)
+pred_nn_class  <- apply(pred_nn_probs, 1, which.max) - 1L  # 0 = bad, 1 = good
+pred_nn_factor <- factor(ifelse(pred_nn_class == 1, "good", "bad"), levels = c("bad", "good"))
 
+nn_acc <- mean(pred_nn_factor == test_data$sentiment)
+nn_err <- 1 - nn_acc
+cat("Neural network test misclassification error:", round(nn_err, 4), "\n")
+cat("Neural network test accuracy:               ", round(nn_acc, 4), "\n")
 ```
+
+The neural network achieves a testing misclassification error of 0.190 and a testing accuracy of 81.0%, correctly classifying 162 out of 200 test reviews. This is slightly worse than LASSO (82.5%) but substantially better than logistic regression (72.5%), suggesting that the neural network captures some nonlinear patterns in the DTM features despite the severe overfitting observed during training.
 
 ### (d) Binary comparison table
 
@@ -627,16 +858,29 @@ Provide a clear side-by-side comparison of the three binary models. Your compari
 - and one short note on interpretability.
 
 ```{r}
-
+comparison_bin <- data.frame(
+  Model = c("LASSO", "Logistic Regression (post-LASSO)", "Neural Network"),
+  Tuning_Choice = c(
+    "lambda.1se (10-fold CV)",
+    "LASSO-selected predictors, no penalty",
+    paste0("epoch = ", chosen_epoch_bin, " (validation curve)")
+  ),
+  Test_Error    = c(round(lasso_err, 4), round(glm_err, 4), round(nn_err, 4)),
+  Test_Accuracy = c(round(lasso_acc, 4), round(glm_acc, 4), round(nn_acc, 4)),
+  Interpretability = c(
+    "High: sparse signed coefficients",
+    "High: unbiased GLM coefs with SEs available",
+    "Low: black-box weights, no direct interpretation"
+  )
+)
+knitr::kable(comparison_bin, caption = "Binary Classification Model Comparison")
 ```
 
 ### (e) Binary recommendation
 
 Which binary model would you recommend for prediction, and why?
 
-
-
-
+We recommend the LASSO model for binary prediction. It achieves the highest test accuracy (82.5%) and lowest misclassification error (17.5%) among the three models, while also being the most interpretable — the sparse signed coefficients directly reveal which words drive positive or negative predictions. The logistic regression performs worst (72.5%) due to the near-perfect separation problem inflating its coefficients, and the neural network (81.0%) comes close to LASSO but sacrifices interpretability with no meaningful accuracy gain. In a text classification setting where both performance and word-level insight matter, LASSO is the most practical choice.
 
 # Part 3: Five-Class Models with Bag of Words
 
@@ -886,11 +1130,6 @@ For each architecture, report:
 - testing accuracy,
 - and testing error.
 
-```{r}
-install.packages("keras3")
-library(keras3)
-
-```
 
 ```{r}
 library(keras3)
@@ -911,7 +1150,7 @@ p_feat_multi <- ncol(x_train_nn_multi)
 build_multi_nn <- function(units1, units2 = NULL, dropout_rate = 0) {
   model <- keras_model_sequential() |>
     layer_dense(units = units1, activation = "relu", input_shape = c(p_feat_multi))
-  
+
   if (!is.null(units2)) {
     if (dropout_rate > 0) {
       model <- model |> layer_dropout(rate = dropout_rate)
@@ -919,11 +1158,11 @@ build_multi_nn <- function(units1, units2 = NULL, dropout_rate = 0) {
     model <- model |>
       layer_dense(units = units2, activation = "relu")
   }
-  
+
   if (is.null(units2) && dropout_rate > 0) {
     model <- model |> layer_dropout(rate = dropout_rate)
   }
-  
+
   model |>
     layer_dense(units = 5, activation = "softmax")
 }
@@ -940,19 +1179,19 @@ results_nn_multi <- data.frame()
 
 for (spec in arch_grid) {
   set.seed(2025)
-  
+
   model <- build_multi_nn(
     units1 = spec$units[1],
     units2 = if (length(spec$units) == 2) spec$units[2] else NULL,
     dropout_rate = spec$dropout
   )
-  
+
   model |> compile(
     optimizer = optimizer_adam(),
     loss = "sparse_categorical_crossentropy",
     metrics = c("accuracy")
   )
-  
+
   history <- model |> fit(
     x = x_train_nn_multi,
     y = y_train_nn_multi,
@@ -961,26 +1200,26 @@ for (spec in arch_grid) {
     validation_data = list(x_val_nn_multi, y_val_nn_multi),
     verbose = 0
   )
-  
+
   val_acc_hist <- history$metrics$val_accuracy
   best_epoch <- which.max(val_acc_hist)
-  
+
   # refit model using chosen epoch on train + validation combined
   x_trainval <- rbind(x_train_nn_multi, x_val_nn_multi)
   y_trainval <- c(y_train_nn_multi, y_val_nn_multi)
-  
+
   final_model <- build_multi_nn(
     units1 = spec$units[1],
     units2 = if (length(spec$units) == 2) spec$units[2] else NULL,
     dropout_rate = spec$dropout
   )
-  
+
   final_model |> compile(
     optimizer = optimizer_adam(),
     loss = "sparse_categorical_crossentropy",
     metrics = c("accuracy")
   )
-  
+
   final_model |> fit(
     x = x_trainval,
     y = y_trainval,
@@ -988,13 +1227,13 @@ for (spec in arch_grid) {
     batch_size = 32,
     verbose = 0
   )
-  
+
   pred_probs <- predict(final_model, x_test_nn_multi, verbose = 0)
   pred_class <- apply(pred_probs, 1, which.max) - 1L
-  
+
   test_acc <- mean(pred_class == y_test_nn_multi)
   test_err <- 1 - test_acc
-  
+
   results_nn_multi <- rbind(
     results_nn_multi,
     data.frame(
@@ -1153,13 +1392,12 @@ Use the `transformers` package to get predicted 5-star ratings for the reviews i
 Apply the `text-classification` task with model `nlptown/bert-base-multilingual-uncased-sentiment`. Remember to set `truncation = TRUE` and `max_length = as.integer(512)`.
 
 ```{r}
-# Hint:
-# star_predictor <- transformers$pipeline(
-#   "text-classification",
-#   model = 'nlptown/bert-base-multilingual-uncased-sentiment',
-#   truncation = TRUE,
-#   max_length = as.integer(512)
-# )
+star_predictor <- transformers$pipeline(
+  "text-classification",
+  model = 'nlptown/bert-base-multilingual-uncased-sentiment',
+  truncation = TRUE,
+  max_length = as.integer(512)
+)
 ```
 
 ### (b) Generate predictions
@@ -1167,7 +1405,8 @@ Apply the `text-classification` task with model `nlptown/bert-base-multilingual-
 Extract the predicted star label for each review in the testing data.
 
 ```{r}
-
+test_texts <- as.list(yelp_data_1200$text[test_idx])
+predictions <- star_predictor(test_texts)
 ```
 
 ### (c) Evaluate the pipeline
@@ -1179,12 +1418,23 @@ Report:
 - and the confusion matrix.
 
 ```{r}
+# Extract number from prediction labels
+pred_labels <- sapply(predictions, function(x) as.integer(substr(x$label, 1, 1)))
+true_labels <- yelp_data_1200$stars[test_idx]
 
+# Compute metrics
+acc <- mean(pred_labels == true_labels)
+err <- 1 - acc
+cat("Testing accuracy:", acc, "\n")
+cat("Testing misclassification error:", err, "\n")
+table(Predicted = pred_labels, Actual = true_labels)
 ```
 
 ### (d) Short discussion
 
 In 5 sentences, describe what this pipeline is doing well and where it appears to struggle.
+
+The sentiment pipeline achieves a testing accuracy of 0.62, which is reasonable given that it is a pretrained model applied directly to Yelp reviews without any task-specific fine-tuning. The model performs best at the extremes, correctly classifying 21 out of 28 one-star reviews and 67 out of 85 five-star reviews, suggesting it reliably captures clearly negative and clearly positive sentiment. The main struggle is in the middle ratings of 2, 3, and 4 stars, where reviews mix positive and negative language in varying degrees that are difficult to distinguish. The most common errors are off by just one star, such as predicting 4 when the true label is 3 or predicting 3 when the true label is 4, indicating the model understands general sentiment direction but lacks precision on intensity. Errors of two or more stars are relatively rare, which suggests the pipeline is making reasonable mistakes rather than completely misreading the sentiment of a review.
 
 ## 4.2 Embeddings
 
@@ -1195,23 +1445,28 @@ Create transformer embeddings for each review.
 Use the `feature-extraction` pipeline with model `distilbert/distilbert-base-uncased-finetuned-sst-2-english`. Be sure to set the `tokenize` argument to the same model.
 
 ```{r}
-# Hint:
-# model <- "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
-# exembed <- transformers$pipeline(
-#   task = "feature-extraction",
-#   model = model,
-#   tokenize = model,
-#   truncation = TRUE,
-#   max_length = as.integer(512)
-# )
+model <- "distilbert/distilbert-base-uncased-finetuned-sst-2-english"
+exembed <- transformers$pipeline(
+  task = "feature-extraction",
+  model = model,
+  tokenize = model,
+  truncation = TRUE,
+  max_length = as.integer(512)
+)
 ```
 
 ### (b) Average embedding
 
 Calculate the average embedding for each review and construct one matrix of review-level features.
 
-```{r}
 
+```{r}
+embeddings <- exembed(as.list(yelp_data_1200$text))
+
+embed_matrix <- do.call(rbind, lapply(embeddings, function(x) {
+  token_matrix <- do.call(rbind, x[[1]])
+  colMeans(token_matrix)
+}))
 ```
 
 ### (c) Split embedding data
@@ -1219,7 +1474,10 @@ Calculate the average embedding for each review and construct one matrix of revi
 Using the same 1200 reviews, use the first 1000 embeddings as training data and the remaining 200 as testing data.
 
 ```{r}
-
+x_train_embed <- embed_matrix[1:1000, ]
+x_test_embed  <- embed_matrix[1001:1200, ]
+y_train_embed <- yelp_data_1200$stars[1:1000]
+y_test_embed  <- yelp_data_1200$stars[1001:1200]
 ```
 
 ## 4.3 Embeddings plus LASSO
@@ -1229,7 +1487,14 @@ Using the same 1200 reviews, use the first 1000 embeddings as training data and 
 Perform LASSO with the review embeddings using 10-fold cross-validation. Set `type.measure = "class"` and `family = "multinomial"`.
 
 ```{r}
-
+fit.lasso.embed <- cv.glmnet(
+  x_train_embed,
+  y_train_embed,
+  family       = "multinomial",
+  alpha        = 1,
+  type.measure = "class",
+  nfolds       = 10
+)
 ```
 
 ### (b) Predict the testing ratings
@@ -1237,7 +1502,10 @@ Perform LASSO with the review embeddings using 10-fold cross-validation. Set `ty
 Use `lambda.min` to predict ratings for the testing data.
 
 ```{r}
-
+pred_embed_lasso <- predict(fit.lasso.embed, 
+                            newx = x_test_embed, 
+                            s = "lambda.min", 
+                            type = "class")
 ```
 
 ### (c) Evaluate performance
@@ -1245,7 +1513,11 @@ Use `lambda.min` to predict ratings for the testing data.
 Report the testing accuracy, testing misclassification error, and the confusion matrix.
 
 ```{r}
-
+acc_embed_lasso <- mean(pred_embed_lasso == y_test_embed)
+err_embed_lasso <- 1 - acc_embed_lasso
+cat("Testing accuracy:", acc_embed_lasso, "\n")
+cat("Testing misclassification error:", err_embed_lasso, "\n")
+table(Predicted = pred_embed_lasso, Actual = y_test_embed)
 ```
 
 ## 4.4 Embeddings plus neural network
@@ -1255,23 +1527,37 @@ Report the testing accuracy, testing misclassification error, and the confusion 
 The following chunk creates a neural network architecture to predict stars using review embeddings. Explain the architecture briefly.
 
 ```{r}
-# p <- 768
-# model_embed_nn <- keras_model_sequential() %>%
-#   layer_dense(units = 56, activation = "relu", input_shape = c(p)) %>%
-#   layer_dense(units = 28, activation = "relu") %>%
-#   layer_dropout(0.1) %>%
-#   layer_dense(units = 28, activation = "relu") %>%
-#   layer_dense(units = 5, activation = "softmax")
-#
-# summary(model_embed_nn)
+p <- 768
+model_embed_nn <- keras_model_sequential() %>%
+  layer_dense(units = 56, activation = "relu", input_shape = c(p)) %>%
+  layer_dense(units = 28, activation = "relu") %>%
+  layer_dropout(0.1) %>%
+  layer_dense(units = 28, activation = "relu") %>%
+  layer_dense(units = 5, activation = "softmax")
+
+summary(model_embed_nn)
 ```
+The network takes a 768-dimensional DistilBERT embedding as input and passes it through three hidden layers with ReLU activation, progressively compressing the representation from 768 to 56 to 28 neurons. A dropout layer with rate 0.1 is applied after the second hidden layer to randomly zero out 10% of neurons during training, reducing overfitting. The third hidden layer maintains 28 neurons before passing to the output layer, which uses softmax activation over 5 units to produce class probabilities for each star rating. The predicted star rating is the class with the highest output probability. In total the network has 45,617 trainable parameters.
 
 ### (b) Train the model
 
 Compile and train the model using the training embeddings.
 
 ```{r}
+model_embed_nn |> compile(
+  optimizer = optimizer_adam(),
+  loss      = "sparse_categorical_crossentropy",
+  metrics   = c("accuracy")
+)
 
+model_embed_nn |> fit(
+  x                = x_train_embed,
+  y                = as.integer(y_train_embed) - 1L,
+  epochs           = 20,
+  batch_size       = 32,
+  validation_split = 0.15,
+  verbose          = 0
+)
 ```
 
 ### (c) Evaluate the model
@@ -1279,13 +1565,22 @@ Compile and train the model using the training embeddings.
 Report the testing accuracy, testing misclassification error, and the confusion matrix.
 
 ```{r}
+pred_probs_embed_nn <- predict(model_embed_nn, x_test_embed, verbose = 0)
+pred_class_embed_nn <- apply(pred_probs_embed_nn, 1, which.max)
+true_class_embed_nn <- as.integer(y_test_embed)
 
+acc_embed_nn <- mean(pred_class_embed_nn == true_class_embed_nn)
+err_embed_nn <- 1 - acc_embed_nn
+cat("Testing accuracy:", acc_embed_nn, "\n")
+cat("Testing misclassification error:", err_embed_nn, "\n")
+table(Predicted = pred_class_embed_nn, Actual = true_class_embed_nn)
 ```
 
 ### (d) Comparison with embedding LASSO
 
 Compare the embedding-based LASSO and embedding-based neural network in 5 sentences.
 
+The embedding-based LASSO outperforms the embedding-based neural network, achieving a testing accuracy of 0.705 compared to 0.66 for the neural network. Both models show the same pattern of errors, performing well on 1-star and 5-star reviews while struggling to distinguish between the middle ratings of 2, 3, and 4 stars, with most mistakes being off by just one star. The LASSO likely benefits from its implicit feature selection, which is well suited to the high-dimensional 768-feature embedding space relative to the 1000 training samples available. The neural network has 45,617 trainable parameters, which may be too many for a dataset of this size, leading to overfitting despite the dropout regularization. In this case the simpler LASSO model generalizes better, suggesting that with limited data a linear model on top of rich BERT embeddings can outperform a more complex neural network.
 
 ## 4.5 Fine-tuning
 
@@ -1300,35 +1595,32 @@ If you restart R, run the setup chunk before loading any other Python-dependent 
 Use the `transformers` package to prepare a fine-tuning data set for `distilbert/distilbert-base-uncased`. Since each review has exactly one star rating, this is a 5-class single-label classification problem.
 
 ```{r}
-# Hint:
-# tokenizer <- transformers$AutoTokenizer$from_pretrained("distilbert/distilbert-base-uncased")
-# data.train <- yelp_data[train_index, c("text", "stars")]
-# data.test  <- yelp_data[test_index, c("text", "stars")]
-# train_text <- as.list(data.train$text)
-# test_text  <- as.list(data.test$text)
+tokenizer <- transformers$AutoTokenizer$from_pretrained("distilbert/distilbert-base-uncased")
+data.train <- yelp_data_1200[train_idx, c("text", "stars")]
+data.test  <- yelp_data_1200[test_idx, c("text", "stars")]
+train_text <- as.list(data.train$text)
+test_text  <- as.list(data.test$text)
 ```
 
 ```{r}
-# Hint:
-# train_encodings <- tokenizer(
-#   train_text, truncation = TRUE,
-#   padding = TRUE, max_length = 300L
-# )
-# test_encodings <- tokenizer(
-#   test_text, truncation = TRUE,
-#   padding = TRUE, max_length = 300L
-# )
+train_encodings <- tokenizer(
+  train_text, truncation = TRUE,
+  padding = TRUE, max_length = 300L
+)
+test_encodings <- tokenizer(
+  test_text, truncation = TRUE,
+  padding = TRUE, max_length = 300L
+)
 ```
 
 ```{r}
-# Hint:
-# train_labels <- as.integer(data.train$stars) - 1L
-# test_labels  <- as.integer(data.test$stars) - 1L
-# py <- reticulate::import_main()
-# py$train_encodings <- train_encodings
-# py$test_encodings <- test_encodings
-# py$train_labels <- train_labels
-# py$test_labels <- test_labels
+train_labels <- as.integer(data.train$stars) - 1L
+test_labels  <- as.integer(data.test$stars) - 1L
+py <- reticulate::import_main()
+py$train_encodings <- train_encodings
+py$test_encodings <- test_encodings
+py$train_labels <- train_labels
+py$test_labels <- test_labels
 ```
 
 ### (b) Fine-tune the model
@@ -1336,44 +1628,40 @@ Use the `transformers` package to prepare a fine-tuning data set for `distilbert
 Fit the model on the training data.
 
 ```{r}
-# Hint:
-# reticulate::py_run_string("
-# import torch
-# class YelpDataset(torch.utils.data.Dataset):
-#     def __init__(self, encodings, labels): self.encodings, self.labels = encodings, labels
-#     def __getitem__(self, idx): return {**{k: torch.tensor(v[idx]) for k, v in self.encodings.items()}, 'labels': torch.tensor(int(self.labels[idx]))}
-#     def __len__(self): return len(self.labels)
-# ")
+reticulate::py_run_string("
+import torch
+class YelpDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels): self.encodings, self.labels = encodings, labels
+    def __getitem__(self, idx): return {**{k: torch.tensor(v[idx]) for k, v in self.encodings.items()}, 'labels': torch.tensor(int(self.labels[idx]))}
+    def __len__(self): return len(self.labels)
+")
 ```
 
 ```{r}
-# Hint:
-# reticulate::py_run_string("
-# train_dataset = YelpDataset(train_encodings, train_labels)
-# test_dataset = YelpDataset(test_encodings, test_labels)
-# train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
-# test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
-# ")
+reticulate::py_run_string("
+train_dataset = YelpDataset(train_encodings, train_labels)
+test_dataset = YelpDataset(test_encodings, test_labels)
+train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True)
+test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=16, shuffle=False)
+")
 ```
 
 ```{r}
-# Hint:
-# reticulate::py_run_string("
-# from transformers import AutoModelForSequenceClassification
-# model_BERT = AutoModelForSequenceClassification.from_pretrained('distilbert/distilbert-base-uncased', num_labels=5, problem_type='single_label_classification')
-# optimizer = torch.optim.AdamW(model_BERT.parameters(), lr=3e-5)
-# ")
+reticulate::py_run_string("
+from transformers import AutoModelForSequenceClassification
+model_BERT = AutoModelForSequenceClassification.from_pretrained('distilbert/distilbert-base-uncased', num_labels=5, problem_type='single_label_classification')
+optimizer = torch.optim.AdamW(model_BERT.parameters(), lr=3e-5)
+")
 ```
 
 ```{r}
-# Hint:
-# reticulate::py_run_string("
-# model_BERT.train()
-# for epoch in range(1):
-#     for batch in train_loader:
-#         optimizer.zero_grad(); outputs = model_BERT(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], labels=batch['labels'])
-#         outputs.loss.backward(); optimizer.step()
-# ")
+reticulate::py_run_string("
+model_BERT.train()
+for epoch in range(1):
+    for batch in train_loader:
+        optimizer.zero_grad(); outputs = model_BERT(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'], labels=batch['labels'])
+        outputs.loss.backward(); optimizer.step()
+")
 ```
 
 ### (c) Evaluate the fine-tuned model
@@ -1381,29 +1669,29 @@ Fit the model on the training data.
 Report the testing accuracy, testing mis-classification error, and the confusion matrix.
 
 ```{r}
-# Hint:
-# reticulate::py_run_string("
-# model_BERT.eval(); pred_stars_finetune = []
-# with torch.no_grad():
-#     for batch in test_loader:
-#         outputs = model_BERT(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'])
-#         pred_stars_finetune.extend((outputs.logits.cpu().numpy().argmax(axis=1) + 1).tolist())
-# ")
+reticulate::py_run_string("
+model_BERT.eval(); pred_stars_finetune = []
+with torch.no_grad():
+    for batch in test_loader:
+        outputs = model_BERT(input_ids=batch['input_ids'], attention_mask=batch['attention_mask'])
+        pred_stars_finetune.extend((outputs.logits.cpu().numpy().argmax(axis=1) + 1).tolist())
+")
 ```
 
 ```{r}
-# Hint:
-# pred_stars_finetune <- factor(unlist(py$pred_stars_finetune), levels = 1:5)
-# finetune_acc <- mean(pred_stars_finetune == data.test$stars)
-# finetune_err <- 1 - finetune_acc
-# table(Predicted = pred_stars_finetune, Actual = data.test$stars)
-# finetune_acc
-# finetune_err
+pred_stars_finetune <- factor(unlist(py$pred_stars_finetune), levels = 1:5)
+finetune_acc <- mean(pred_stars_finetune == data.test$stars)
+finetune_err <- 1 - finetune_acc
+table(Predicted = pred_stars_finetune, Actual = data.test$stars)
+finetune_acc
+finetune_err
 ```
 
 ### (d) Reflection
 
 Compared with the earlier transformer sections, what additional modeling flexibility do you gain from fine-tuning, and what additional cost do you pay?
+
+Fine-tuning allows the transformer model to adapt its internal weights specifically to the Yelp star rating task, rather than relying on generic language representations learned from pretraining. This gives significantly more modeling flexibility since every layer of DistilBERT can adjust to capture the specific linguistic patterns that distinguish 1-star from 5-star reviews. In contrast, the earlier embedding approach kept BERT frozen, meaning the 768-dimensional representations were never optimized for this task. However, the additional cost is substantial — fine-tuning requires much more compute time, with even 1 epoch taking significantly longer than all previous modeling steps combined. In our case we trained for only 1 epoch due to compute constraints, which resulted in underfitting, the model achieved only 0.60 testing accuracy and failed to predict middle star ratings reliably, actually underperforming the embedding-based LASSO at 0.705 despite being a more complex approach. With more epochs performance would likely improve, but with only 900 training reviews the risk of overfitting also increases due to the small size of our dataset, making careful epoch selection critical.
 
 
 # Part 5: Error Analysis and Final Recommendation
@@ -1416,17 +1704,26 @@ Choose your final five-class model from Parts 3 and 4. Then answer the following
 
 Which classes are hardest to predict? Support your answer using the confusion matrix.
 
+Across both the embedding LASSO and the Part 3 multiclass neural network, classes 2 and 3 are consistently the hardest to predict. In the embedding LASSO, class 2 has only 2 correct predictions out of 14 true instances and class 3 has only 8 out of 25, while in the Part 3 NN, class 2 has 0 correct out of 9 and class 3 has 0 correct out of 29. Class 4 is also challenging in both models, frequently confused with 3 and 5 stars. Classes 1 and 5 are the easiest across both models, reflecting that extreme sentiment is far easier to identify than moderate ratings.
+
 ### (b) Most common confusions
 
 Which ratings are most often confused with each other?
+
+Across both models the most common confusions occur among the higher rating categories of 3, 4, and 5 stars. In the embedding LASSO, the most frequent errors are predicting 5 when the actual rating is 4 (13 cases) and predicting 4 when the actual is either 3 or 5 (7 cases each). The Part 3 neural network shows a similar pattern, with the most common confusion being predicting 5 when the actual is 4 (25 cases), followed by predicting 5 when the actual is 3 (13 cases) and predicting 4 when the actual is 3 (12 cases). Both models share a tendency to overpredict higher star ratings, suggesting the language in 3, 4, and 5 star reviews is often similar enough to cause systematic upward bias in predictions.
 
 ### (c) Nearby versus severe mistakes
 
 Are most mistakes between nearby ratings such as 4 versus 5 or 2 versus 3, or do you also see larger mistakes such as 1 versus 5? Explain what this suggests about the task.
 
+The vast majority of mistakes in both models are between nearby ratings, such as 3 versus 4 or 4 versus 5, with very few severe errors such as 1 versus 5. This suggests that the task is fundamentally difficult at a fine-grained level, reviews with similar star ratings often use similar language, and even a human reader might struggle to distinguish a 3-star from a 4-star review without additional context about the reviewer. Rating boundaries are also inherently subjective and vary person to person, meaning two reviewers could use nearly identical language to describe a 3-star versus 4-star experience. 1-star and 5-star reviews tend to use strong, unambiguous language that clearly signals extreme dissatisfaction or enthusiasm, making them easy to classify. In general, separating positive from negative sentiment is straightforward, but the real difficulty lies in distinguishing how positive a review is, which explains why most errors are concentrated in the 3, 4, and 5 star range.
+
 ### (d) Calibration / confidence comment
 
 If your chosen model produces class probabilities or confidence scores, comment briefly on whether the model seems overconfident or appropriately uncertain when it makes mistakes. A simple probability-based discussion is enough, a formal calibration curve is optional.
+
+The embedding LASSO (Chosen Model) produces class probabilities for each star rating. Examining misclassified reviews, the model shows mixed calibration, for mistakes involving middle ratings (2, 3, 4), probabilities are often spread across multiple classes, suggesting appropriate uncertainty where the task is genuinely difficult. However for mistakes on extreme ratings, the model can be overconfident, for example assigning over 96% probability to class 1 on some misclassified reviews. Overall the model tends to be more uncertain when confusing nearby classes and more overconfident when misclassifying reviews with strong sentiment signals that happen to point in the wrong direction. In contrast, the Part 3 multiclass neural network shows more uniform uncertainty on misclassified reviews, with probabilities often spread across multiple classes rather than concentrated on one, suggesting it is generally more cautious when making mistakes despite its lower overall accuracy.
+
 
 ## 5.2 Final comparison
 
@@ -1441,6 +1738,19 @@ Your comparison should include at least:
 - testing error,
 - and a couple sentences on strengths and weaknesses.
 
+```{r}
+comparison_final <- data.frame(
+  Model = c("Multiclass NN (Part 3)", "Embedding LASSO (Part 4)"),
+  Text_Representation = c("Bag of Words", "BERT Embeddings"),
+  Main_Tuning = c("NN1, 1 hidden layer, 20 neurons, epoch=8", "lambda.min via 10-fold CV"),
+  Testing_Accuracy = c(0.575, 0.705),
+  Testing_Error = c(0.425, 0.295)
+)
+knitr::kable(comparison_final, caption = "Final Five-Class Model Comparison")
+```
+
+The multiclass neural network uses sparse bag-of-words features which limits its ability to capture semantic meaning, but it is fast to train and requires no external pretrained models. The embedding LASSO benefits from rich BERT representations that capture context and meaning far beyond word counts, achieving substantially higher accuracy, though it requires running all reviews through DistilBERT first which is computationally expensive. For this dataset size the simpler LASSO on top of BERT embeddings clearly outperforms the more complex neural network on raw word counts.
+
 ## 5.3 Final recommendation
 
 Write a short final recommendation addressing the following.
@@ -1449,10 +1759,16 @@ Write a short final recommendation addressing the following.
 
 Which model would you recommend for predicting Yelp ratings, and why?
 
+We recommend the embedding-based LASSO model as the final model for predicting Yelp star ratings. The key advantage is the input representation -- BERT embeddings capture rich semantic and contextual information far beyond what bag of words can offer, since each review is represented as a dense 768-dimensional vector encoding meaning and context rather than simple word counts. Compared to the bag-of-words models in Part 3, this representation alone drives a substantial accuracy improvement. LASSO is also a simple and interpretable model that trains quickly on top of these embeddings, making it practical without sacrificing much performance. It is worth noting that all models were trained on a relatively small dataset of 1,200 reviews, which favors simpler models like LASSO over more complex approaches. Fine-tuning and neural networks typically require much larger datasets to realize their full potential, which likely explains why the embedding LASSO outperformed both the embedding NN and the fine-tuned DistilBERT model in this setting.
+
 ### (b) Final accuracy
 
 What is the final testing accuracy of your chosen model?
 
+The final testing accuracy of the embedding-based LASSO model is 0.705, with a testing misclassification error of 0.295.
+
 ### (c) Tradeoff discussion
 
 What tradeoff are you making between interpretability, predictive performance, and computational cost?
+
+The main tradeoff is between interpretability and computational cost on one side and predictive performance on the other. The embedding LASSO is more interpretable than a neural network and far cheaper to run than fine-tuning, but it relies on frozen BERT embeddings that were not adapted to the Yelp task specifically. Fine-tuning would likely improve performance with more compute and data, but at a significant cost in training time and complexity. Bag-of-words models are the most interpretable and cheapest but sacrifice substantial predictive performance, making the embedding LASSO the best balance across all three dimensions for this dataset.
