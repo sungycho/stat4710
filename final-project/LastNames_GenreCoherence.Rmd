@@ -1,0 +1,792 @@
+---
+title: "Genre Coherence in Spotify's Audio Feature Space"
+subtitle: "STAT 4710/5710 — Modern Data Mining, Spring 2026"
+author: "Sung Cho, Etienne Lee, Leo Li"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+---
+
+```{r setup, include=FALSE}
+# Set working directory to the folder containing dataset.csv before knitting
+# dataset source: https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset
+
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE,
+                      fig.width = 8, fig.height = 5)
+
+set.seed(42)
+
+# install.packages(c(
+#   "tidyverse", "corrplot", "fmsb", "cluster", "mclust",
+#   "glmnet", "randomForest", "caret", "factoextra",
+#   "ggrepel", "knitr", "kableExtra"
+# ))
+
+library(tidyverse)
+library(corrplot)
+library(fmsb)
+library(cluster)
+library(mclust)
+library(glmnet)
+library(randomForest)
+library(caret)
+library(factoextra)
+library(ggrepel)
+library(knitr)
+library(kableExtra)
+```
+
+```{r data-load, include=FALSE}
+spotify <- read_csv("dataset.csv")
+
+# Remove duplicate track_id entries — keep first occurrence
+spotify <- spotify %>%
+  distinct(track_id, .keep_all = TRUE)
+
+# Define the 10 audio features used throughout
+audio_features <- c("danceability", "energy", "loudness", "speechiness",
+                    "acousticness", "instrumentalness", "liveness",
+                    "valence", "tempo", "duration_ms")
+
+# Drop rows with any NA in the 10 audio features
+spotify <- spotify %>%
+  drop_na(all_of(audio_features))
+
+# Macro-genre mapping
+macro_genre_map <- c(
+  # Electronic / Dance
+  "edm" = "Electronic/Dance", "electro" = "Electronic/Dance",
+  "electronic" = "Electronic/Dance", "house" = "Electronic/Dance",
+  "techno" = "Electronic/Dance", "trance" = "Electronic/Dance",
+  "dubstep" = "Electronic/Dance", "drum-and-bass" = "Electronic/Dance",
+  "garage" = "Electronic/Dance", "chicago-house" = "Electronic/Dance",
+  "deep-house" = "Electronic/Dance", "detroit-techno" = "Electronic/Dance",
+  "minimal-techno" = "Electronic/Dance", "progressive-house" = "Electronic/Dance",
+  # Hip-Hop / R&B
+  "hip-hop" = "Hip-Hop/R&B", "r-n-b" = "Hip-Hop/R&B",
+  "rap" = "Hip-Hop/R&B", "trap" = "Hip-Hop/R&B",
+  # Pop
+  "pop" = "Pop", "dance" = "Pop", "power-pop" = "Pop",
+  "synth-pop" = "Pop", "k-pop" = "Pop", "cantopop" = "Pop",
+  "mandopop" = "Pop",
+  # Rock / Metal
+  "rock" = "Rock/Metal", "alt-rock" = "Rock/Metal",
+  "alternative" = "Rock/Metal", "grunge" = "Rock/Metal",
+  "hard-rock" = "Rock/Metal", "heavy-metal" = "Rock/Metal",
+  "metal" = "Rock/Metal", "death-metal" = "Rock/Metal",
+  "black-metal" = "Rock/Metal", "metalcore" = "Rock/Metal",
+  "punk" = "Rock/Metal", "punk-rock" = "Rock/Metal",
+  "emo" = "Rock/Metal", "goth" = "Rock/Metal",
+  "psych-rock" = "Rock/Metal",
+  # Classical / Jazz
+  "classical" = "Classical/Jazz", "piano" = "Classical/Jazz",
+  "opera" = "Classical/Jazz", "jazz" = "Classical/Jazz",
+  # Folk / Country / Acoustic
+  "folk" = "Folk/Country/Acoustic", "country" = "Folk/Country/Acoustic",
+  "bluegrass" = "Folk/Country/Acoustic", "acoustic" = "Folk/Country/Acoustic",
+  "singer-songwriter" = "Folk/Country/Acoustic",
+  "americana" = "Folk/Country/Acoustic",
+  # Latin
+  "latin" = "Latin", "salsa" = "Latin", "samba" = "Latin",
+  "bossanova" = "Latin", "sertanejo" = "Latin", "pagode" = "Latin",
+  "mpb" = "Latin", "reggaeton" = "Latin", "tango" = "Latin",
+  # World / Other
+  "afrobeat" = "World/Other", "anime" = "World/Other",
+  "brazil" = "World/Other", "british" = "World/Other",
+  "club" = "World/Other", "forro" = "World/Other",
+  "french" = "World/Other", "german" = "World/Other",
+  "indian" = "World/Other", "iranian" = "World/Other",
+  "malay" = "World/Other", "new-age" = "World/Other",
+  "romance" = "World/Other", "show-tunes" = "World/Other",
+  "ska" = "World/Other", "sleep" = "World/Other",
+  "songwriter" = "World/Other", "spanish" = "World/Other",
+  "swedish" = "World/Other", "turkish" = "World/Other",
+  "world-music" = "World/Other",
+  # Soul / Funk / Blues
+  "soul" = "Soul/Funk/Blues", "funk" = "Soul/Funk/Blues",
+  "blues" = "Soul/Funk/Blues", "groove" = "Soul/Funk/Blues",
+  "disco" = "Soul/Funk/Blues",
+  # Reggae / Caribbean
+  "reggae" = "Reggae/Caribbean", "dancehall" = "Reggae/Caribbean"
+)
+
+spotify <- spotify %>%
+  mutate(macro_genre = macro_genre_map[track_genre],
+         macro_genre = ifelse(is.na(macro_genre), "Other", macro_genre),
+         macro_genre = as.factor(macro_genre))
+
+# Standardized feature matrix
+X_scaled <- spotify %>%
+  select(all_of(audio_features)) %>%
+  scale()
+```
+
+---
+
+## Executive Summary
+
+Music streaming platforms assign genre labels to tracks as a primary means of organization and discovery, yet it remains unclear whether these labels reflect genuine musical coherence or function primarily as marketing categories. This project investigates the relationship between Spotify's genre taxonomy and the underlying audio feature space using a dataset of 114,000 tracks spanning 125 genres. We apply principal component analysis to reduce the high-dimensional audio feature space and use k-means and hierarchical clustering to assess whether unsupervised groupings recover genre labels, quantified by adjusted Rand index and silhouette score. We further compute within-genre variance across all 125 genres to produce a genre coherence ranking, train a multi-class classifier to identify boundary songs that are musically proximate to genres other than their assigned label, and fit lasso regression models — both globally and stratified by macro-genre — to assess whether genre label predicts track popularity beyond what audio features alone explain. Together, these analyses ask whether genre is a meaningful descriptor of musical identity or an artifact of industry convention, with implications for how streaming platforms structure discovery and recommendation.
+
+---
+
+## Introduction and Motivation
+
+Genre is one of the most fundamental organizing principles in music. Streaming platforms like Spotify use genre labels to drive recommendation algorithms, playlist curation, and discovery features. Yet the boundary between genres has always been porous: artists blend styles, listeners resist categorization, and industry labels often reflect marketing logic rather than musical content. This project uses Spotify's audio feature API — a set of continuous measurements derived from signal processing — to ask a concrete question: do songs within the same genre actually sound similar to each other?
+
+We approach this question from five angles: unsupervised clustering (does the audio feature space cluster into genre-like groups?), within-genre variance (which genres are musically tight vs. diffuse?), popularity regression (does genre predict popularity beyond what audio features explain?), boundary song detection (which songs are misclassified by a genre classifier, and what does that reveal?), and feature importance (which audio dimensions drive genre separation vs. popularity?). Together these form a comprehensive audit of Spotify's genre taxonomy.
+
+---
+
+## Data Description
+
+The dataset is the [Spotify Tracks Dataset](https://www.kaggle.com/datasets/maharshipandya/-spotify-tracks-dataset) from Kaggle (author: maharshipandya), comprising approximately 114,000 tracks across 125 fine-grained genres. Each row corresponds to a unique track with 20 columns: metadata (track ID, artist, album, name), one outcome variable (`popularity`, scored 0–100 based on recent play counts), three discrete audio features (`key`, `mode`, `time_signature`), and ten continuous audio features that form our primary feature matrix.
+
+The ten continuous features used throughout this analysis are: `danceability`, `energy`, `loudness`, `speechiness`, `acousticness`, `instrumentalness`, `liveness`, `valence`, `tempo`, and `duration_ms`. The discrete features (`key`, `mode`, `time_signature`) are excluded from the primary feature matrix but are explored in EDA. After removing duplicate track IDs and rows with missing values in the audio features, the cleaned dataset contains `r nrow(spotify)` tracks across `r n_distinct(spotify$track_genre)` genres.
+
+We map the 125 fine-grained genres to `r n_distinct(spotify$macro_genre)` macro-genre families (e.g., Pop, Rock/Metal, Electronic/Dance) to enable higher-level comparisons and visualizations. Any genres not covered by the mapping are labeled "Other."
+
+```{r data-summary}
+tibble(
+  Statistic = c("Total tracks (after dedup & NA removal)",
+                "Unique fine-grained genres",
+                "Unique macro-genres",
+                "Features in primary matrix"),
+  Value = c(nrow(spotify),
+            n_distinct(spotify$track_genre),
+            n_distinct(spotify$macro_genre),
+            length(audio_features))
+) %>%
+  kable(caption = "Dataset summary after preprocessing") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+---
+
+## Exploratory Data Analysis
+
+We begin with univariate and bivariate summaries of the audio features and genre distribution to understand the data structure before modeling.
+
+### Distributions of Audio Features and Popularity
+
+```{r eda-distributions, fig.cap="Distributions of popularity and the 10 audio features. Note the spike at popularity = 0 and the strong bimodality of instrumentalness."}
+# Popularity histogram
+p_pop <- ggplot(spotify, aes(x = popularity)) +
+  geom_histogram(bins = 50, fill = "#3498db", color = "white", alpha = 0.8) +
+  labs(title = "Distribution of Popularity", x = "Popularity (0–100)", y = "Count") +
+  theme_minimal()
+
+# Audio feature density plots
+spotify_long <- spotify %>%
+  select(all_of(audio_features)) %>%
+  pivot_longer(everything(), names_to = "feature", values_to = "value")
+
+p_features <- ggplot(spotify_long, aes(x = value)) +
+  geom_histogram(bins = 40, fill = "#2ecc71", color = "white", alpha = 0.8) +
+  facet_wrap(~feature, scales = "free", ncol = 5) +
+  labs(title = "Distributions of Audio Features", x = NULL, y = "Count") +
+  theme_minimal() +
+  theme(strip.text = element_text(size = 9))
+
+print(p_pop)
+print(p_features)
+```
+
+The `popularity` distribution is right-skewed with a pronounced spike at 0, reflecting the large number of obscure tracks. `instrumentalness` is highly bimodal: most tracks are either strongly vocal or strongly instrumental with few intermediate values. `speechiness` and `acousticness` are also right-skewed.
+
+### Correlation Structure
+
+```{r eda-correlation, fig.cap="Correlation matrix of the 10 audio features. Strong positive correlation between energy and loudness; strong negative correlation between energy and acousticness."}
+cor_mat <- cor(spotify %>% select(all_of(audio_features)), use = "complete.obs")
+
+corrplot(cor_mat,
+         method = "color",
+         type = "upper",
+         order = "hclust",
+         tl.cex = 0.85,
+         addCoef.col = "black",
+         number.cex = 0.65,
+         col = colorRampPalette(c("#e74c3c", "white", "#2980b9"))(200),
+         title = "Audio Feature Correlation Matrix",
+         mar = c(0, 0, 1, 0))
+```
+
+As expected, `energy` and `loudness` are strongly positively correlated (~0.76), while `energy` and `acousticness` are strongly negatively correlated (~−0.71). `valence` and `danceability` show moderate positive correlation (~0.46). These relationships motivate dimensionality reduction via PCA.
+
+### Genre Counts by Macro-Genre
+
+```{r eda-genre-counts, fig.cap="Track counts by macro-genre. Some macro-genre families are substantially larger than others, reflecting the original dataset composition."}
+spotify %>%
+  count(macro_genre, sort = TRUE) %>%
+  ggplot(aes(x = reorder(macro_genre, n), y = n, fill = macro_genre)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Track Counts by Macro-Genre",
+       x = "Macro-Genre", y = "Number of Tracks") +
+  theme_minimal()
+```
+
+### Audio Fingerprint by Macro-Genre (Radar Chart)
+
+```{r eda-radar, fig.cap="Radar charts showing the mean standardized audio profile ('fingerprint') for each macro-genre family.", fig.height=10}
+# Compute mean standardized features per macro-genre
+radar_data <- as_tibble(X_scaled) %>%
+  mutate(macro_genre = spotify$macro_genre) %>%
+  group_by(macro_genre) %>%
+  summarise(across(everything(), mean), .groups = "drop")
+
+genres_list <- levels(spotify$macro_genre)
+
+# Radar chart requires max/min rows prepended
+radar_mat <- radar_data %>%
+  select(-macro_genre) %>%
+  as.data.frame()
+rownames(radar_mat) <- radar_data$macro_genre
+
+max_vals <- apply(radar_mat, 2, max) + 0.1
+min_vals <- apply(radar_mat, 2, min) - 0.1
+radar_plot_data <- rbind(max_vals, min_vals, radar_mat)
+
+par(mfrow = c(3, 4), mar = c(1, 1, 2, 1))
+colors_radar <- RColorBrewer::brewer.pal(min(nrow(radar_mat), 11), "Set3")
+for (i in seq_len(nrow(radar_mat))) {
+  fmsb::radarchart(
+    radar_plot_data[c(1, 2, i + 2), ],
+    axistype = 1,
+    pcol = colors_radar[(i - 1) %% length(colors_radar) + 1],
+    pfcol = adjustcolor(colors_radar[(i - 1) %% length(colors_radar) + 1], alpha.f = 0.3),
+    plwd = 2,
+    cglcol = "grey80",
+    cglty = 1,
+    axislabcol = "grey50",
+    vlcex = 0.65,
+    title = rownames(radar_mat)[i]
+  )
+}
+par(mfrow = c(1, 1))
+```
+
+### Popularity by Macro-Genre
+
+```{r eda-popularity-by-genre, fig.cap="Distribution of popularity scores by macro-genre. Pop and Hip-Hop/R&B tend to have higher median popularity; Classical/Jazz and Electronic/Dance show wider variance."}
+ggplot(spotify, aes(x = reorder(macro_genre, popularity, median),
+                    y = popularity, fill = macro_genre)) +
+  geom_boxplot(outlier.size = 0.3, outlier.alpha = 0.3, show.legend = FALSE) +
+  coord_flip() +
+  scale_fill_brewer(palette = "Set3") +
+  labs(title = "Popularity by Macro-Genre",
+       x = "Macro-Genre", y = "Popularity (0–100)") +
+  theme_minimal()
+```
+
+[PLACEHOLDER: interpret which genres have higher median popularity vs. wider variance and connect to known streaming trends]
+
+---
+
+## Methods
+
+This section describes the five analytical angles applied to the dataset. All methods operate on the standardized 10-feature matrix unless otherwise noted.
+
+### PCA and Clustering
+
+We use PCA to project the 10-dimensional audio feature space into a lower-dimensional space for visualization and as input to clustering. K-means and hierarchical clustering are then applied to assess whether unsupervised groupings align with genre labels.
+
+### Within-Genre Variance
+
+For each of the 125 fine-grained genres, we compute the mean within-genre variance across all standardized features, yielding a coherence score. Genres with low variance (high coherence) have tracks that sound similar to each other; diffuse genres have high internal variance.
+
+### Popularity Regression
+
+We model `popularity` as a function of audio features and macro-genre dummies using OLS, lasso (global), and stratified OLS per macro-genre. This tests whether genre labels carry market value beyond what audio features explain.
+
+### Boundary Song Detection
+
+A random forest classifier is trained to predict macro-genre from audio features. Tracks where the true genre receives low predicted probability — while another genre receives the highest probability — are termed "boundary songs" and reveal where genre assignments are musically ambiguous.
+
+### Feature Importance
+
+We synthesize classifier variable importance (random forest) with lasso coefficient magnitudes to ask which audio dimensions drive genre separation vs. popularity prediction.
+
+---
+
+## Results
+
+### Angle 1: PCA and Clustering
+
+#### PCA
+
+```{r pca-fit, fig.cap="Left: Scree plot showing variance explained by each principal component. Right: PCA biplot of PC1 vs. PC2 colored by macro-genre."}
+set.seed(42)
+
+pca_fit <- prcomp(X_scaled, scale. = FALSE)  # already standardized
+
+# Scree plot
+fviz_screeplot(pca_fit, addlabels = TRUE, ncp = 10,
+               barfill = "#3498db", barcolor = "white",
+               linecolor = "#e74c3c") +
+  labs(title = "PCA Scree Plot — Variance Explained per Component") +
+  theme_minimal()
+
+# Biplot PC1 vs PC2
+pca_scores <- as_tibble(pca_fit$x) %>%
+  mutate(macro_genre = spotify$macro_genre)
+
+ggplot(pca_scores %>% sample_n(5000), aes(x = PC1, y = PC2, color = macro_genre)) +
+  geom_point(alpha = 0.4, size = 0.8) +
+  scale_color_brewer(palette = "Set3") +
+  labs(title = "PCA Biplot: PC1 vs PC2 (random sample of 5,000 tracks)",
+       color = "Macro-Genre") +
+  theme_minimal() +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
+
+# Cumulative variance explained
+cum_var <- cumsum(pca_fit$sdev^2) / sum(pca_fit$sdev^2)
+tibble(
+  Components = c(2, 3, 5, 10),
+  `Cumulative Variance Explained` = scales::percent(cum_var[c(2, 3, 5, 10)])
+) %>%
+  kable(caption = "Cumulative variance explained by PCA components") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: interpret how much variance is captured by the first 2–5 PCs and whether macro-genres separate visually in the biplot]
+
+#### K-Means Clustering
+
+```{r clustering-kmeans, fig.cap="Elbow plot (WCSS) and silhouette scores for k-means across k = 5 to 30. The selected k balances the elbow heuristic and peak silhouette."}
+set.seed(42)
+
+k_values <- c(5, 10, 15, 20, 30)
+wcss <- numeric(length(k_values))
+sil_scores <- numeric(length(k_values))
+
+# Subsample for speed (hierarchical will use same subsample)
+set.seed(42)
+idx_sub <- sample(nrow(X_scaled), min(10000, nrow(X_scaled)))
+X_sub <- X_scaled[idx_sub, ]
+
+for (i in seq_along(k_values)) {
+  km <- kmeans(X_sub, centers = k_values[i], nstart = 10, iter.max = 50)
+  wcss[i] <- km$tot.withinss
+  sil <- silhouette(km$cluster, dist(X_sub))
+  sil_scores[i] <- mean(sil[, 3])
+}
+
+elbow_df <- tibble(k = k_values, wcss = wcss, silhouette = sil_scores)
+
+p_elbow <- ggplot(elbow_df, aes(x = k, y = wcss)) +
+  geom_line(color = "#3498db", linewidth = 1) +
+  geom_point(size = 3, color = "#2980b9") +
+  labs(title = "Elbow Plot: WCSS vs. k", x = "k", y = "Within-Cluster SS") +
+  theme_minimal()
+
+p_sil <- ggplot(elbow_df, aes(x = k, y = silhouette)) +
+  geom_line(color = "#e74c3c", linewidth = 1) +
+  geom_point(size = 3, color = "#c0392b") +
+  labs(title = "Silhouette Score vs. k", x = "k", y = "Mean Silhouette") +
+  theme_minimal()
+
+gridExtra::grid.arrange(p_elbow, p_sil, ncol = 2)
+
+# Select best k
+best_k <- k_values[which.max(sil_scores)]
+cat("Selected k:", best_k, "\n")
+
+# Final k-means at best k
+set.seed(42)
+km_best <- kmeans(X_sub, centers = best_k, nstart = 20, iter.max = 100)
+
+# ARI against macro_genre
+macro_sub <- spotify$macro_genre[idx_sub]
+ari_kmeans <- adjustedRandIndex(km_best$cluster, as.integer(macro_sub))
+cat(sprintf("K-means ARI (k=%d) vs. macro_genre: %.4f\n", best_k, ari_kmeans))
+
+# Visualize on PC1-PC2
+pca_sub <- as_tibble(pca_fit$x[idx_sub, 1:2]) %>%
+  mutate(cluster = factor(km_best$cluster),
+         macro_genre = macro_sub)
+
+ggplot(pca_sub, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(alpha = 0.3, size = 0.7) +
+  labs(title = sprintf("K-Means Clusters (k=%d) on PC1-PC2", best_k),
+       color = "Cluster") +
+  theme_minimal()
+```
+
+[PLACEHOLDER: interpret ARI value — note that ARI near 0 indicates near-random alignment, near 1 = perfect recovery. Low ARI is the expected and central finding.]
+
+#### Hierarchical Clustering
+
+```{r clustering-hierarchical, fig.cap="Hierarchical clustering (Ward's method) cut at the selected k. ARI compared against macro-genre labels and versus k-means."}
+set.seed(42)
+
+# Use smaller subsample for hierarchical (distance matrix is O(n^2))
+idx_hier <- sample(nrow(X_scaled), min(3000, nrow(X_scaled)))
+X_hier <- X_scaled[idx_hier, ]
+macro_hier <- spotify$macro_genre[idx_hier]
+
+dist_mat <- dist(X_hier)
+hc_fit <- hclust(dist_mat, method = "ward.D2")
+
+hc_cut <- cutree(hc_fit, k = best_k)
+ari_hclust <- adjustedRandIndex(hc_cut, as.integer(macro_hier))
+
+tibble(
+  Method = c("K-Means", "Hierarchical (Ward)"),
+  k = best_k,
+  ARI = round(c(ari_kmeans, ari_hclust), 4)
+) %>%
+  kable(caption = "Adjusted Rand Index: clustering vs. macro-genre labels") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: compare k-means vs. hierarchical ARI and interpret. If both ARIs are low (~0–0.15), conclude that genre labels do not map to audio feature clusters — a key finding that motivates the rest of the analysis.]
+
+---
+
+### Angle 2: Within-Genre Variance (Coherence Ranking)
+
+```{r genre-coherence, fig.cap="Top 15 most coherent and bottom 15 least coherent fine-grained genres, ranked by inverse mean within-genre variance of standardized audio features."}
+# Compute within-genre variance for all 125 fine-grained genres
+coherence_df <- as_tibble(X_scaled) %>%
+  mutate(track_genre = spotify$track_genre) %>%
+  group_by(track_genre) %>%
+  summarise(
+    n = n(),
+    mean_var = mean(sapply(select(cur_data(), -track_genre), var)),
+    .groups = "drop"
+  ) %>%
+  filter(n >= 20) %>%  # require at least 20 tracks for stable variance
+  mutate(coherence_score = 1 / mean_var) %>%
+  arrange(desc(coherence_score))
+
+top15 <- head(coherence_df, 15)
+bottom15 <- tail(coherence_df, 15)
+
+bind_rows(
+  top15 %>% mutate(group = "Most Coherent (Top 15)"),
+  bottom15 %>% mutate(group = "Least Coherent (Bottom 15)")
+) %>%
+  ggplot(aes(x = reorder(track_genre, coherence_score),
+             y = coherence_score, fill = group)) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~group, scales = "free_y", ncol = 2) +
+  scale_fill_manual(values = c("Most Coherent (Top 15)" = "#2ecc71",
+                               "Least Coherent (Bottom 15)" = "#e74c3c")) +
+  labs(title = "Genre Coherence Ranking (Fine-Grained Genres)",
+       x = "Genre", y = "Coherence Score (1 / Mean Within-Genre Variance)",
+       fill = NULL) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+# Macro-genre coherence
+macro_coherence <- as_tibble(X_scaled) %>%
+  mutate(macro_genre = spotify$macro_genre) %>%
+  group_by(macro_genre) %>%
+  summarise(
+    n = n(),
+    mean_var = mean(sapply(select(cur_data(), -macro_genre), var)),
+    .groups = "drop"
+  ) %>%
+  mutate(coherence_score = 1 / mean_var) %>%
+  arrange(desc(coherence_score))
+
+macro_coherence %>%
+  select(macro_genre, n, mean_var, coherence_score) %>%
+  mutate(across(where(is.numeric), ~round(., 4))) %>%
+  kable(caption = "Coherence scores at the macro-genre level") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: discuss which specific genres are tight (e.g., classical, death-metal) vs. diffuse (e.g., pop, indie). Interpret whether high coherence reflects a strong musical tradition, niche production conventions, or small sample size. Compare macro vs. fine-grained coherence.]
+
+---
+
+### Angle 3: Popularity Regression
+
+#### OLS (Global)
+
+```{r regression-global}
+# Prepare regression data with macro_genre dummies
+reg_data <- as_tibble(X_scaled) %>%
+  mutate(popularity = spotify$popularity,
+         macro_genre = spotify$macro_genre)
+
+ols_fit <- lm(popularity ~ ., data = reg_data)
+
+# VIF check
+vif_vals <- tryCatch(car::vif(ols_fit), error = function(e) NULL)
+if (!is.null(vif_vals)) {
+  vif_df <- as_tibble(vif_vals, rownames = "feature") %>%
+    rename(VIF = value) %>%
+    filter(VIF > 5)
+  if (nrow(vif_df) > 0) {
+    vif_df %>%
+      kable(caption = "Features with VIF > 5 (multicollinearity concern)") %>%
+      kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+  }
+}
+
+# Extract key stats
+ols_summary <- summary(ols_fit)
+cat(sprintf("Adjusted R²: %.4f\n", ols_summary$adj.r.squared))
+
+# Coefficient table (top 20 by |t-value|)
+coef_df <- as_tibble(coef(ols_summary), rownames = "term") %>%
+  rename(estimate = Estimate, se = `Std. Error`,
+         t_val = `t value`, p_val = `Pr(>|t|)`) %>%
+  mutate(significant = p_val < 0.05) %>%
+  arrange(desc(abs(t_val))) %>%
+  head(20)
+
+coef_df %>%
+  mutate(across(where(is.numeric), ~round(., 4))) %>%
+  kable(caption = "OLS coefficients (top 20 by |t-value|)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: interpret adjusted R², note which audio features and macro-genre dummies are most significant, and discuss multicollinearity between energy and loudness.]
+
+#### Lasso Regression
+
+```{r regression-lasso, fig.cap="Lasso coefficient path across log(lambda). Vertical lines indicate lambda.min (left) and lambda.1se (right)."}
+set.seed(42)
+
+# Build model matrix with macro_genre dummies
+X_lasso <- model.matrix(popularity ~ ., data = reg_data)[, -1]
+y_lasso <- reg_data$popularity
+
+cv_lasso <- cv.glmnet(X_lasso, y_lasso, alpha = 1, nfolds = 5)
+
+plot(cv_lasso$glmnet.fit, xvar = "lambda", label = FALSE)
+abline(v = log(cv_lasso$lambda.min), col = "red", lty = 2)
+abline(v = log(cv_lasso$lambda.1se), col = "blue", lty = 2)
+legend("topright", legend = c("lambda.min", "lambda.1se"),
+       col = c("red", "blue"), lty = 2, bty = "n")
+title("Lasso Coefficient Path")
+
+# Surviving features at lambda.1se
+lasso_coefs <- coef(cv_lasso, s = "lambda.1se")
+lasso_coef_df <- as_tibble(as.matrix(lasso_coefs), rownames = "feature") %>%
+  rename(coefficient = s1) %>%
+  filter(feature != "(Intercept)", coefficient != 0) %>%
+  arrange(desc(abs(coefficient)))
+
+lasso_coef_df %>%
+  mutate(coefficient = round(coefficient, 4)) %>%
+  kable(caption = "Non-zero lasso coefficients at lambda.1se") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: report how many features survive at lambda.1se vs. lambda.min; note whether macro_genre dummies are retained; interpret the direction and magnitude of key surviving coefficients.]
+
+#### Stratified OLS by Macro-Genre
+
+```{r regression-stratified, fig.cap="Comparison of OLS coefficients for key audio features across the 5 largest macro-genres, with 95% confidence intervals."}
+# Fit separate OLS models for top 5 macro-genres by track count
+top5_genres <- names(sort(table(spotify$macro_genre), decreasing = TRUE))[1:5]
+
+stratified_coefs <- map_dfr(top5_genres, function(g) {
+  df_g <- reg_data %>% filter(macro_genre == g) %>% select(-macro_genre)
+  fit_g <- lm(popularity ~ ., data = df_g)
+  s <- summary(fit_g)$coefficients
+  as_tibble(s, rownames = "term") %>%
+    rename(estimate = Estimate, se = `Std. Error`) %>%
+    mutate(macro_genre = g,
+           lower = estimate - 1.96 * se,
+           upper = estimate + 1.96 * se)
+})
+
+# Focus on the 10 audio features
+stratified_coefs %>%
+  filter(term %in% audio_features) %>%
+  ggplot(aes(x = estimate, y = reorder(term, estimate),
+             color = macro_genre, group = macro_genre)) +
+  geom_point(position = position_dodge(0.5), size = 2.5) +
+  geom_errorbarh(aes(xmin = lower, xmax = upper),
+                 position = position_dodge(0.5), height = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
+  scale_color_brewer(palette = "Set1") +
+  labs(title = "Stratified OLS Coefficients by Macro-Genre",
+       x = "Coefficient Estimate (±95% CI)",
+       y = "Audio Feature", color = "Macro-Genre") +
+  theme_minimal()
+```
+
+[PLACEHOLDER: discuss whether the effect of valence or energy on popularity differs across macro-genres; interpret sign reversals as evidence that genre context moderates how audio features drive streaming success.]
+
+---
+
+### Angle 4: Boundary Song Detection
+
+#### Random Forest Classifier
+
+```{r classifier-fit}
+set.seed(42)
+
+# Prepare classification data
+clf_data <- as_tibble(X_scaled) %>%
+  mutate(macro_genre = spotify$macro_genre)
+
+# 80/20 stratified split
+train_idx <- createDataPartition(clf_data$macro_genre, p = 0.8, list = FALSE)
+train_df <- clf_data[train_idx, ]
+test_df  <- clf_data[-train_idx, ]
+
+set.seed(42)
+rf_fit <- randomForest(
+  macro_genre ~ .,
+  data = train_df,
+  ntree = 300,
+  importance = TRUE,
+  probability = TRUE
+)
+
+# Predictions on test set
+rf_pred_class <- predict(rf_fit, test_df)
+rf_pred_prob  <- predict(rf_fit, test_df, type = "prob")
+
+# Confusion matrix
+cm <- confusionMatrix(rf_pred_class, test_df$macro_genre)
+cat(sprintf("Overall Accuracy: %.4f\n", cm$overall["Accuracy"]))
+
+# Macro-averaged F1
+class_stats <- cm$byClass
+macro_f1 <- mean(class_stats[, "F1"], na.rm = TRUE)
+cat(sprintf("Macro-averaged F1: %.4f\n", macro_f1))
+
+# Per-class summary table
+as_tibble(class_stats[, c("Precision", "Recall", "F1")], rownames = "Class") %>%
+  mutate(across(where(is.numeric), ~round(., 4))) %>%
+  kable(caption = "Per-class precision, recall, and F1 on test set") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: interpret overall accuracy and macro F1. Note which macro-genres are hardest to classify (low F1) and whether this aligns with the coherence ranking — diffuse genres should be harder to classify correctly.]
+
+#### Boundary Songs
+
+```{r boundary-songs}
+# Extract boundary songs: true genre predicted with max prob < 0.4
+test_meta <- spotify[-train_idx, ] %>%
+  select(track_name, artists, macro_genre)
+
+boundary_df <- as_tibble(rf_pred_prob) %>%
+  mutate(
+    true_genre    = test_df$macro_genre,
+    pred_genre    = rf_pred_class,
+    max_prob      = apply(rf_pred_prob, 1, max),
+    track_name    = test_meta$track_name,
+    artists       = test_meta$artists
+  ) %>%
+  filter(max_prob < 0.4, true_genre != pred_genre) %>%
+  arrange(max_prob) %>%
+  select(track_name, artists, true_genre, pred_genre, max_prob) %>%
+  head(20)
+
+boundary_df %>%
+  mutate(max_prob = round(max_prob, 4)) %>%
+  kable(caption = "Top 20 boundary songs: misclassified with low confidence") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: surface 3–5 specific well-known songs from this list and offer musical interpretations. Example: a hip-hop track with heavy acoustic guitar might be labeled Hip-Hop/R&B but predicted as Folk/Country/Acoustic. These are the most engaging concrete examples in the paper.]
+
+---
+
+### Angle 5: Feature Importance
+
+```{r feature-importance, fig.cap="Variable importance from the random forest (Mean Decrease in Gini), compared with lasso coefficient magnitudes from Angle 3. Features that matter for genre classification may differ from those that drive popularity."}
+# Random forest importance
+rf_imp <- importance(rf_fit)
+rf_imp_df <- as_tibble(rf_imp, rownames = "feature") %>%
+  arrange(desc(MeanDecreaseGini))
+
+p_rf_imp <- ggplot(rf_imp_df,
+                   aes(x = reorder(feature, MeanDecreaseGini),
+                       y = MeanDecreaseGini)) +
+  geom_col(fill = "#9b59b6", alpha = 0.85) +
+  coord_flip() +
+  labs(title = "RF Feature Importance (Genre Classification)",
+       x = "Feature", y = "Mean Decrease in Gini") +
+  theme_minimal()
+
+# Lasso importance (absolute coefficients, audio features only)
+lasso_imp_df <- lasso_coef_df %>%
+  filter(feature %in% audio_features) %>%
+  mutate(abs_coef = abs(coefficient))
+
+p_lasso_imp <- ggplot(lasso_imp_df,
+                      aes(x = reorder(feature, abs_coef),
+                          y = abs_coef)) +
+  geom_col(fill = "#e67e22", alpha = 0.85) +
+  coord_flip() +
+  labs(title = "Lasso Feature Importance (Popularity Regression)",
+       x = "Feature", y = "|Lasso Coefficient| at lambda.1se") +
+  theme_minimal()
+
+gridExtra::grid.arrange(p_rf_imp, p_lasso_imp, ncol = 2)
+
+# Summary table
+rf_imp_df %>%
+  select(feature, MeanDecreaseGini) %>%
+  left_join(lasso_imp_df %>% select(feature, abs_coef), by = "feature") %>%
+  mutate(across(where(is.numeric), ~round(., 4))) %>%
+  rename(`RF Gini Importance` = MeanDecreaseGini,
+         `|Lasso Coef|` = abs_coef) %>%
+  kable(caption = "Feature importance: genre classification vs. popularity regression") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+[PLACEHOLDER: identify whether the top genre-classification features (e.g., instrumentalness, acousticness) are the same as the top popularity-prediction features. Divergence here suggests that the dimensions of sound that make genres distinct are not the same dimensions that make tracks popular.]
+
+---
+
+## Discussion and Conclusion
+
+[PLACEHOLDER: synthesize the five angles into a coherent narrative addressing the central question — do genre labels reflect genuine musical coherence?
+
+Key points to address:
+1. **Clustering (Angle 1):** The low ARI (~0.XX) between audio feature clusters and genre labels suggests that Spotify's genre taxonomy does not arise from natural audio similarity groupings. Genres are not well-separated in the 10-dimensional audio feature space.
+2. **Coherence Ranking (Angle 2):** Genres vary dramatically in coherence. [List top/bottom genres]. This suggests that "genre" as a construct is operationally inconsistent — some labels are precise musical descriptors; others are broad marketing umbrellas.
+3. **Popularity Regression (Angle 3):** The significance/non-significance of macro_genre dummies in the lasso model tells us whether genre has independent market value. [Interpret whether genre dummies survive regularization].
+4. **Boundary Songs (Angle 4):** The classifier's confusion pattern reveals which genre pairs are musically proximate. [Name the most confused pairs]. Boundary songs demonstrate that musical reality is more continuous than categorical labels suggest.
+5. **Feature Importance (Angle 5):** The features that distinguish genres (RF) and the features that drive popularity (lasso) [do/do not] overlap substantially. [Interpret this divergence or convergence].
+
+**Conclusion:** Genre labels on Spotify [are/are not] meaningful descriptors of musical identity. The strongest evidence [for/against] comes from [specific finding]. For streaming platforms, these findings suggest [practical implication — e.g., that audio-feature-based recommendation may outperform genre-based filtering for certain macro-genres, or that genre labels serve a social/marketing function distinct from acoustic content].
+
+**Limitations:** The dataset captures a single snapshot in time; genre labels are platform-assigned and may reflect editorial decisions rather than community consensus; the 10-feature audio space is Spotify's proprietary abstraction, not a complete representation of musical content.
+]
+
+---
+
+## Statement on AI Use
+
+[PLACEHOLDER: describe how AI tools (e.g., Claude Code, GitHub Copilot, ChatGPT) were used in this project — e.g., for code scaffolding, debugging, prose editing. Be specific about what was AI-assisted vs. entirely human-authored, per course policy.]
+
+---
+
+## Appendix
+
+### Appendix A: Full Macro-Genre Mapping
+
+```{r appendix-mapping}
+tibble(
+  fine_genre = names(macro_genre_map),
+  macro_genre = unname(macro_genre_map)
+) %>%
+  arrange(macro_genre, fine_genre) %>%
+  kable(caption = "Full mapping from fine-grained genres to macro-genre families") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  scroll_box(height = "400px")
+```
+
+### Appendix B: Session Info
+
+```{r appendix-session}
+sessionInfo()
+```
