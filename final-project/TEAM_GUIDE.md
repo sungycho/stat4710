@@ -23,8 +23,6 @@ install.packages(c(
 ))
 ```
 
-> **Note:** `car` is needed for the VIF check in the OLS section. `gridExtra` and `RColorBrewer` are used in several plots but not listed in the original setup chunk — install them too.
-
 ### Knit the Document
 - Open `LastNames_GenreCoherence.Rmd` in RStudio
 - Make sure the working directory is set to the folder containing `dataset.csv`

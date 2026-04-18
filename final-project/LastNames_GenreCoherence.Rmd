@@ -22,7 +22,8 @@ set.seed(42)
 # install.packages(c(
 #   "tidyverse", "corrplot", "fmsb", "cluster", "mclust",
 #   "glmnet", "randomForest", "caret", "factoextra",
-#   "ggrepel", "knitr", "kableExtra"
+#   "ggrepel", "knitr", "kableExtra", "gridExtra",
+#   "RColorBrewer", "car"
 # ))
 
 library(tidyverse)
@@ -37,6 +38,9 @@ library(factoextra)
 library(ggrepel)
 library(knitr)
 library(kableExtra)
+library(gridExtra)
+library(RColorBrewer)
+library(car)
 ```
 
 ```{r data-load, include=FALSE}
@@ -456,10 +460,12 @@ coherence_df <- as_tibble(X_scaled) %>%
   group_by(track_genre) %>%
   summarise(
     n = n(),
-    mean_var = mean(sapply(select(cur_data(), -track_genre), var)),
+    across(all_of(audio_features), var, .names = "var_{.col}"),
     .groups = "drop"
   ) %>%
-  filter(n >= 20) %>%  # require at least 20 tracks for stable variance
+  mutate(mean_var = rowMeans(select(., starts_with("var_")))) %>%
+  select(track_genre, n, mean_var) %>%
+  filter(n >= 20) %>%
   mutate(coherence_score = 1 / mean_var) %>%
   arrange(desc(coherence_score))
 
@@ -489,9 +495,11 @@ macro_coherence <- as_tibble(X_scaled) %>%
   group_by(macro_genre) %>%
   summarise(
     n = n(),
-    mean_var = mean(sapply(select(cur_data(), -macro_genre), var)),
+    across(all_of(audio_features), var, .names = "var_{.col}"),
     .groups = "drop"
   ) %>%
+  mutate(mean_var = rowMeans(select(., starts_with("var_")))) %>%
+  select(macro_genre, n, mean_var) %>%
   mutate(coherence_score = 1 / mean_var) %>%
   arrange(desc(coherence_score))
 
@@ -518,14 +526,15 @@ reg_data <- as_tibble(X_scaled) %>%
 
 ols_fit <- lm(popularity ~ ., data = reg_data)
 
-# VIF check
+# VIF check (car::vif returns a matrix for models with factors; take first column)
 vif_vals <- tryCatch(car::vif(ols_fit), error = function(e) NULL)
 if (!is.null(vif_vals)) {
-  vif_df <- as_tibble(vif_vals, rownames = "feature") %>%
-    rename(VIF = value) %>%
+  vif_vec <- if (is.matrix(vif_vals)) vif_vals[, 1] else vif_vals
+  vif_df <- tibble(feature = names(vif_vec), VIF = vif_vec) %>%
     filter(VIF > 5)
   if (nrow(vif_df) > 0) {
     vif_df %>%
+      mutate(VIF = round(VIF, 3)) %>%
       kable(caption = "Features with VIF > 5 (multicollinearity concern)") %>%
       kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
   }
@@ -642,8 +651,7 @@ rf_fit <- randomForest(
   macro_genre ~ .,
   data = train_df,
   ntree = 300,
-  importance = TRUE,
-  probability = TRUE
+  importance = TRUE
 )
 
 # Predictions on test set
