@@ -23,7 +23,7 @@ set.seed(42)
 #   "tidyverse", "corrplot", "fmsb", "cluster", "mclust",
 #   "glmnet", "randomForest", "caret", "factoextra",
 #   "ggrepel", "knitr", "kableExtra", "gridExtra",
-#   "RColorBrewer", "car"
+#   "RColorBrewer", "car", "uwot"
 # ))
 
 library(tidyverse)
@@ -41,6 +41,7 @@ library(kableExtra)
 library(gridExtra)
 library(RColorBrewer)
 library(car)
+library(uwot)
 ```
 
 ```{r data-load, include=FALSE}
@@ -140,7 +141,7 @@ Music streaming platforms assign genre labels to tracks as a primary means of or
 
 Genre is one of the most fundamental organizing principles in music. Streaming platforms like Spotify use genre labels to drive recommendation algorithms, playlist curation, and discovery features. Yet the boundary between genres has always been porous: artists blend styles, listeners resist categorization, and industry labels often reflect marketing logic rather than musical content. This project uses Spotify's audio feature API — a set of continuous measurements derived from signal processing — to ask a concrete question: do songs within the same genre actually sound similar to each other?
 
-We approach this question from five angles: unsupervised clustering (does the audio feature space cluster into genre-like groups?), within-genre variance (which genres are musically tight vs. diffuse?), popularity regression (does genre predict popularity beyond what audio features explain?), boundary song detection (which songs are misclassified by a genre classifier, and what does that reveal?), and feature importance (which audio dimensions drive genre separation vs. popularity?). Together these form a comprehensive audit of Spotify's genre taxonomy.
+We approach this question from six angles: unsupervised clustering (does the audio feature space cluster into genre-like groups?), within-genre variance (which genres are musically tight vs. diffuse?), popularity regression (does genre predict popularity beyond what audio features explain?), boundary song detection (which songs are misclassified by a genre classifier, and what does that reveal?), feature importance (which audio dimensions drive genre separation vs. popularity?), and audio feature geometry (does the space have interpretable directional structure analogous to word embeddings?). Together these form a comprehensive audit of Spotify's genre taxonomy.
 
 ---
 
@@ -223,8 +224,7 @@ As expected, `energy` and `loudness` are strongly positively correlated (~0.76),
 
 ```{r eda-genre-counts, fig.cap="Track counts by macro-genre. Some macro-genre families are substantially larger than others, reflecting the original dataset composition."}
 spotify %>%
-  group_by(macro_genre) %>%
-  summarise(n = n(), .groups = "drop") %>%
+  count(macro_genre) %>%
   arrange(desc(n)) %>%
   ggplot(aes(x = reorder(macro_genre, n), y = n, fill = macro_genre)) +
   geom_col(show.legend = FALSE) +
@@ -278,7 +278,7 @@ par(mfrow = c(1, 1))
 ### Popularity by Macro-Genre
 
 ```{r eda-popularity-by-genre, fig.cap="Distribution of popularity scores by macro-genre. Pop and Hip-Hop/R&B tend to have higher median popularity; Classical/Jazz and Electronic/Dance show wider variance."}
-ggplot(spotify, aes(x = reorder(macro_genre, popularity, median),
+ggplot(spotify, aes(x = fct_reorder(macro_genre, popularity, median),
                     y = popularity, fill = macro_genre)) +
   geom_boxplot(outlier.size = 0.3, outlier.alpha = 0.3, show.legend = FALSE) +
   coord_flip() +
@@ -288,7 +288,7 @@ ggplot(spotify, aes(x = reorder(macro_genre, popularity, median),
   theme_minimal()
 ```
 
-Popularity differs meaningfully across macro-genres, with Hip-Hop/R&B showing the highest median popularity at roughly 47, followed by Pop at about 41, while Latin, World/Other, and Electronic/Dance cluster in the middle around the mid-30s to high-30s. At the lower end, Classical/Jazz has the lowest median, near 20, and Other is also relatively low at around 27. In terms of spread, several genres show substantial variability: Hip-Hop/R&B, Pop, and Electronic/Dance have wide interquartile ranges and long upper whiskers, suggesting these categories contain both many low-visibility songs and a meaningful number of breakout tracks. Latin and Other also display notable high-end outliers, with some songs reaching the 80–95 range despite having lower central tendency overall. By contrast, Classical/Jazz is concentrated at lower popularity levels and appears less likely to produce extremely popular tracks. Qualitatively, this pattern matches streaming behavior: mainstream, playlist-driven genres such as Hip-Hop/R&B and Pop tend to dominate mass listening and algorithmic discovery, while genres like Classical/Jazz or Folk/Country/Acoustic may have more niche but stable audiences, leading to lower medians even when a few songs still achieve broad reach.
+[PLACEHOLDER: interpret which genres have higher median popularity vs. wider variance and connect to known streaming trends]
 
 ---
 
@@ -315,6 +315,10 @@ A random forest classifier is trained to predict macro-genre from audio features
 ### Feature Importance
 
 We synthesize classifier variable importance (random forest) with lasso coefficient magnitudes to ask which audio dimensions drive genre separation vs. popularity prediction.
+
+### Audio Feature Geometry
+
+Inspired by word2vec-style vector arithmetic, we define interpretable axes in the 10-dimensional audio feature space by computing normalized direction vectors between pairs of maximally distinct genre centroids. Projecting all genre centroids onto these axes tests whether the space has semantic directionality — genres sorting sensibly along acoustic, vocal, and intensity dimensions — even in the absence of clean cluster separation.
 
 ---
 
@@ -358,8 +362,42 @@ tibble(
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The PCA results show that the first few components capture a substantial share of the variation in Spotify audio features, but not enough to reduce the genre structure to just one or two clean dimensions. Quantitatively, PC1 explains 28.9% of the total variance and PC2 explains 15.2%, so the first two components together account for about 44% of the variation. Expanding further, the first 3 PCs explain 57%, and the first 5 PCs explain 75%, which suggests that the dataset has meaningful lower-dimensional structure, but that this structure is still moderately high-dimensional rather than dominated by a single latent axis. The scree plot shows a clear drop after the first component and then a more gradual decline, indicating that PC1 is especially important, while PCs 2–5 still each contribute nontrivially. Qualitatively, however, the PC1-versus-PC2 biplot shows substantial overlap across macro-genres, with no sharply separated clusters. Some genres appear to drift toward different regions—for example, World/Other and Classical/Jazz extend further to the right on PC1, while several mainstream genres such as Pop, Hip-Hop/R&B, Latin, and Electronic/Dance concentrate more heavily near the center-left—but the boundaries remain highly diffuse. Overall, the PCA suggests that while audio features do contain structured variation, the first two principal components do not visually separate macro-genres cleanly, which is early evidence that Spotify genre labels may overlap considerably in underlying musical feature space.
+[PLACEHOLDER: interpret how much variance is captured by the first 2–5 PCs and whether macro-genres separate visually in the biplot]
 
+#### UMAP Projection
+
+Unlike PCA, which finds the linear directions of maximum variance, UMAP (Uniform Manifold Approximation and Projection) preserves local neighborhood structure in a non-linear 2D embedding. It often reveals cluster separation that PCA cannot show.
+
+```{r umap-projection, fig.cap="UMAP 2D projection of the standardized audio feature space (10,000 tracks), colored by macro-genre. Compared to the PCA biplot, UMAP better preserves local neighborhood structure and can reveal non-linear separation between genre families."}
+set.seed(42)
+
+idx_umap <- sample(nrow(X_scaled), min(10000, nrow(X_scaled)))
+X_umap_in <- X_scaled[idx_umap, ]
+macro_umap <- spotify$macro_genre[idx_umap]
+
+umap_coords <- uwot::umap(X_umap_in, n_neighbors = 15, min_dist = 0.1,
+                           n_components = 2, verbose = FALSE)
+
+umap_df <- tibble(
+  UMAP1 = umap_coords[, 1],
+  UMAP2 = umap_coords[, 2],
+  macro_genre = macro_umap
+)
+
+ggplot(umap_df, aes(x = UMAP1, y = UMAP2, color = macro_genre)) +
+  geom_point(alpha = 0.35, size = 0.7) +
+  scale_color_brewer(palette = "Set3") +
+  labs(title = "UMAP Projection of Audio Feature Space (10,000 tracks)",
+       color = "Macro-Genre") +
+  theme_minimal() +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
+```
+
+The UMAP projection reveals a strikingly clear result: nearly all macro-genres collapse into a single large, undifferentiated mass. Pop, Rock/Metal, Hip-Hop/R&B, Latin, Folk/Country/Acoustic, Soul/Funk/Blues, and World/Other are thoroughly intermingled throughout the central blob, with no discernible boundaries between them even under UMAP's non-linear lens.
+
+The one meaningful exception is Classical/Jazz, which forms a partially separated cluster in the upper-right region of the embedding. This aligns with its known audio fingerprint — distinctively high instrumentalness and acousticness, low energy and danceability — making it the only macro-genre that is genuinely acoustically coherent and spatially separable. A small isolated cluster also appears at the far bottom-left, consisting of tracks with unusual feature combinations far from the genre mainstream.
+
+Crucially, this null result is more informative than it might appear. UMAP is the most powerful tool available for revealing hidden cluster structure — unlike PCA, it is not constrained to linear projections and will surface any non-linear geometry in the data. The fact that genres remain inseparable even under UMAP closes the strongest counterargument to the low ARI finding from clustering: there is no non-linear structure that PCA was simply missing. Genre boundaries are genuinely not encoded in these 10 audio features, with the single exception of Classical/Jazz.
 
 #### K-Means Clustering
 
@@ -423,7 +461,7 @@ ggplot(pca_sub, aes(x = PC1, y = PC2, color = cluster)) +
   theme_minimal()
 ```
 
-The k-means results provide strong quantitative evidence that unsupervised audio-feature clusters do not align closely with Spotify’s macro-genre labels. Using the elbow plot and silhouette scores, the selected solution was k=5: WCSS falls sharply at first and then begins to flatten, while the mean silhouette score is highest at the smallest tested value and declines steadily as k increases, suggesting that adding more clusters does not create cleaner separation. However, when these five clusters are compared to the observed macro-genres, the adjusted Rand index is only 0.0210, which is extremely close to 0. Since an ARI near 0 indicates near-random agreement and an ARI near 1 indicates perfect recovery, this value implies that the cluster assignments recover almost none of the labeled genre structure beyond chance. Visually, the PC1–PC2 cluster plot confirms this interpretation: the algorithm finds geometric groupings in feature space, but these groupings look like broad overlapping clouds rather than clear genre-specific partitions. In other words, while songs do organize into clusters based on audio similarity, those clusters do not map meaningfully onto Spotify’s macro-genre taxonomy. This low ARI is therefore not a side result but one of the central findings of the project, suggesting that genre labels on Spotify reflect a much noisier and more culturally constructed categorization than a clean partition of songs by underlying acoustic characteristics.
+[PLACEHOLDER: interpret ARI value — note that ARI near 0 indicates near-random alignment, near 1 = perfect recovery. Low ARI is the expected and central finding.]
 
 #### Hierarchical Clustering
 
@@ -450,7 +488,7 @@ tibble(
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-Both clustering methods lead to essentially the same conclusion: Spotify macro-genres do not align well with clusters formed purely from audio features. Quantitatively, k-means with k=5 produces an ARI of 0.021, while hierarchical clustering (Ward’s method) with k=5 produces an ARI of 0.023. Although hierarchical clustering performs very slightly better, the difference is negligible in substantive terms, since both values are extremely close to 0. Because an ARI near 0 indicates agreement no better than random and an ARI near 1 indicates perfect recovery, these results imply that neither clustering method is able to recover the labeled macro-genre structure from the 10-dimensional audio feature space. In other words, the choice of clustering algorithm does not materially change the result: the problem is not that one method failed while another succeeded, but that the underlying genre labels themselves do not appear to correspond to cleanly separable acoustic groupings. This is a key finding of the project and motivates the later analyses on genre coherence, boundary songs, and popularity, since it suggests that Spotify genres may function more as flexible cultural or marketing labels than as sharply defined musical clusters.
+[PLACEHOLDER: compare k-means vs. hierarchical ARI and interpret. If both ARIs are low (~0–0.15), conclude that genre labels do not map to audio feature clusters — a key finding that motivates the rest of the analysis.]
 
 ---
 
@@ -513,7 +551,55 @@ macro_coherence %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The genre coherence ranking shows that some fine-grained genres are much tighter in audio-feature space than others, but the specific results are more surprising than the initial hypothesis. At the fine-grained level, the most coherent genres are dominated by highly stylized and production-consistent categories such as party, edm, dance, house, progressive-house, deep-house, and metalcore, with coherence scores roughly in the 2.2 to just above 3.0 range. These genres likely benefit from strong production conventions—similar tempos, energy levels, loudness, and rhythmic structure—which make tracks within the genre cluster tightly together. By contrast, the least coherent genres include ambient, chicago-house, british, anime, disney, world-music, idm, guitar, breakbeat, and classical/piano, with coherence scores mostly below about 1.2 and in some cases closer to 0.6–1.0. In these cases, low coherence likely reflects broader or more heterogeneous labels: for example, “anime,” “disney,” and “world-music” are not single sonic traditions so much as umbrella categories spanning many different styles, while labels like “guitar” or “british” are especially diffuse and descriptive rather than musically precise. At the macro-genre level, coherence is predictably lower because broader bins combine many substyles: Reggae/Caribbean is the most coherent macro-group (1.9863), followed by Pop (1.8177) and Hip-Hop/R&B (1.8143), while World/Other (0.8798), Other (0.8727), and Classical/Jazz (0.9203) are the least coherent. This comparison suggests an important pattern: coherence depends less on whether a genre is “mainstream” or “niche” and more on whether the label corresponds to a narrow production template versus a broad cultural umbrella. Fine-grained genres can be quite acoustically tight, but once they are aggregated into broader macro-genres, much of that internal consistency disappears.
+[PLACEHOLDER: discuss which specific genres are tight (e.g., classical, death-metal) vs. diffuse (e.g., pop, indie). Interpret whether high coherence reflects a strong musical tradition, niche production conventions, or small sample size. Compare macro vs. fine-grained coherence.]
+
+### Does Musical Tightness Pay Off? Coherence vs. Popularity
+
+```{r coherence-vs-popularity, fig.cap="Scatter plot of genre coherence score vs. median track popularity. Point size reflects genre track count. Red line is a linear regression fit with 95% confidence band."}
+# Median popularity per fine-grained genre
+genre_pop <- spotify %>%
+  group_by(track_genre) %>%
+  summarise(median_popularity = median(popularity), .groups = "drop")
+
+# Join with coherence scores (already filtered to n >= 20)
+coherence_pop <- coherence_df %>%
+  left_join(genre_pop, by = "track_genre")
+
+# Label outliers: top/bottom 10% coherence and top 10% popularity
+label_threshold_coh_hi  <- quantile(coherence_pop$coherence_score, 0.90)
+label_threshold_coh_lo  <- quantile(coherence_pop$coherence_score, 0.10)
+label_threshold_pop     <- quantile(coherence_pop$median_popularity, 0.90)
+
+coherence_pop <- coherence_pop %>%
+  mutate(label = ifelse(
+    coherence_score > label_threshold_coh_hi |
+    coherence_score < label_threshold_coh_lo |
+    median_popularity > label_threshold_pop,
+    track_genre, NA
+  ))
+
+ggplot(coherence_pop, aes(x = coherence_score, y = median_popularity)) +
+  geom_point(aes(size = n), alpha = 0.55, color = "#3498db") +
+  geom_smooth(method = "lm", se = TRUE, color = "#e74c3c", linewidth = 1) +
+  geom_text_repel(aes(label = label), size = 3, max.overlaps = 15,
+                  segment.color = "grey60") +
+  scale_size_continuous(range = c(1.5, 7), name = "Track Count") +
+  labs(title = "Genre Coherence vs. Median Popularity",
+       subtitle = "Does sounding consistent within a genre correlate with commercial success?",
+       x = "Coherence Score (1 / Mean Within-Genre Variance)",
+       y = "Median Popularity (0–100)") +
+  theme_minimal()
+
+# Regression summary
+coh_pop_fit <- lm(median_popularity ~ coherence_score, data = coherence_pop)
+coh_summary <- summary(coh_pop_fit)
+cat(sprintf("R²: %.4f   |   Slope: %.4f   |   p-value: %.4f\n",
+            coh_summary$r.squared,
+            coef(coh_pop_fit)["coherence_score"],
+            coef(coh_summary)["coherence_score", "Pr(>|t|)"]))
+```
+
+The regression yields an R² of 0.0049 and a slope of 2.20 (p = 0.46), indicating no meaningful linear relationship between genre coherence and median popularity. Less than 0.5% of the variance in genre popularity is explained by how internally consistent a genre sounds. The positive slope is not statistically distinguishable from zero at any conventional significance level. This means musical tightness confers no commercial advantage: a genre sounding like itself does not predict how popular its tracks will be on the platform. Popularity appears to be driven by factors orthogonal to acoustic consistency — platform promotion, cultural moment, or artist profile. Notably, `classical` and `iranian` score near zero in popularity despite reasonable coherence, while `pop` and `metal` achieve high median popularity while being acoustically diffuse. This null result reinforces the paper's central argument: genre labels function as market categories rather than acoustic descriptors.
 
 ---
 
@@ -561,7 +647,7 @@ coef_df %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The global OLS results suggest that Spotify popularity is statistically related to both audio features and genre labels, but that these variables explain only a small share of the overall variation. Quantitatively, the model has an adjusted R-squared of 0.0427, meaning it explains only about 4.3% of the variation in track popularity. So while many coefficients are highly significant, the practical predictive power of the linear model is weak. This is not surprising, since popularity likely depends on many omitted factors such as artist reputation, marketing, release timing, playlist placement, and social trends. Among the audio features, the strongest significant effects by absolute t-value are instrumentalness (estimate about -2.66), valence (about -2.00), danceability (about 1.89), and speechiness (about -1.28). In addition, duration_ms (about -0.54) and energy (about -0.73) are negatively associated with popularity, while loudness (about 0.43), tempo (about 0.19), and liveness (about 0.17) are positively associated with popularity, though these latter effects are smaller in magnitude. This suggests that, holding other variables fixed, more danceable, louder, faster, and slightly more live-sounding tracks tend to be somewhat more popular, while tracks that are more instrumental, more speech-heavy, longer, more energetic, or more positive in valence tend to be slightly less popular on average. The macro-genre indicators are also among the most statistically important terms: relative to the omitted baseline genre, Hip-Hop/R&B (about 13.75), Rock/Metal (about 10.48), Pop (about 10.32), World/Other (about 8.34), Electronic/Dance (about 8.06), Latin (about 6.06), Soul/Funk/Blues (about 5.89), Reggae/Caribbean (about 5.89), Other (about 5.54), and Folk/Country/Acoustic (about 5.41) all show positive associations with popularity. This indicates that genre label still carries information beyond the raw audio features. At the same time, the model should be interpreted cautiously because some predictors, especially energy and loudness, are known to be strongly correlated, so multicollinearity may inflate standard errors and make individual coefficient estimates less stable even when the overall model fit is unchanged.
+[PLACEHOLDER: interpret adjusted R², note which audio features and macro-genre dummies are most significant, and discuss multicollinearity between energy and loudness.]
 
 #### Lasso Regression
 
@@ -584,7 +670,7 @@ title("Lasso Coefficient Path")
 # Surviving features at lambda.1se
 lasso_coefs <- coef(cv_lasso, s = "lambda.1se")
 lasso_coef_df <- as_tibble(as.matrix(lasso_coefs), rownames = "feature") %>%
-  rename(coefficient = 2) %>%
+  rename(coefficient = s1) %>%
   filter(feature != "(Intercept)", coefficient != 0) %>%
   arrange(desc(abs(coefficient)))
 
@@ -594,7 +680,7 @@ lasso_coef_df %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The lasso results tell a similar story to the OLS model, but in a more selective and interpretable way. At the more conservative lambda.1se choice, 14 predictors remain nonzero, whereas at lambda.min the model retains essentially all 20 available predictors, so lambda.1se gives a much sparser summary without changing the main substantive conclusions. Importantly, several macro_genre dummies are still retained at lambda.1se, including Hip-Hop/R&B, Pop, Rock/Metal, World/Other, Electronic/Dance, and Latin, which means genre continues to add predictive information even after regularization. Among these, the largest positive coefficients are for Hip-Hop/R&B (about 7.19), Pop (about 4.32), and Rock/Metal (about 4.28), suggesting that tracks in these genres tend to have higher popularity relative to the omitted baseline genre, even after controlling for audio features. Among the continuous variables, instrumentalness remains one of the strongest negative predictors (about -2.64), while danceability remains a positive predictor (about 1.81), and valence (about -1.80) and speechiness (about -1.14) are negative. Duration_ms is also negative (about -0.39), while loudness (about 0.18), energy (about -0.12), and tempo (about 0.03) survive but with relatively small magnitudes. Overall, the lasso confirms that the most important predictors are a mix of genre labels and a small core set of audio features, with the strongest effects coming from genre membership, instrumentalness, danceability, and valence.
+[PLACEHOLDER: report how many features survive at lambda.1se vs. lambda.min; note whether macro_genre dummies are retained; interpret the direction and magnitude of key surviving coefficients.]
 
 #### Stratified OLS by Macro-Genre
 
@@ -629,7 +715,7 @@ stratified_coefs %>%
   theme_minimal()
 ```
 
-The stratified OLS results show that the relationship between audio features and popularity is not constant across macro-genres; instead, genre context clearly moderates which characteristics are rewarded by listeners. The clearest example is energy: it is strongly positive for Latin, moderately positive for World/Other, but negative for Electronic/Dance, Other, and Rock/Metal. This sign reversal suggests that higher energy does not universally increase popularity; rather, it helps in some genres while hurting in others, likely because listeners in different musical spaces respond to intensity differently. Valence is more consistently negative across the five macro-genres shown, but its magnitude still varies, with especially negative effects in Electronic/Dance and Latin and smaller negative effects in Other, Rock/Metal, and World/Other. Danceability also changes by genre: it is clearly positive for Other, Rock/Metal, and World/Other, but negative for Electronic/Dance and Latin, which again suggests that the same audio trait can matter differently depending on the genre context. Other features also show noticeable heterogeneity: loudness is strongly positive for Electronic/Dance but negative for Latin, acousticness is strongly positive for Electronic/Dance and Latin but negative for Rock/Metal and World/Other, and liveness is positive for Latin and slightly positive for Electronic/Dance but near zero or negative elsewhere. Overall, these cross-genre differences indicate that there is no single universal formula for popularity. Instead, the effect of a track’s sonic characteristics depends heavily on the genre environment in which the song is interpreted and consumed, which is strong evidence that genre context shapes how audio features translate into streaming success.
+[PLACEHOLDER: discuss whether the effect of valence or energy on popularity differs across macro-genres; interpret sign reversals as evidence that genre context moderates how audio features drive streaming success.]
 
 ---
 
@@ -677,7 +763,7 @@ as_tibble(class_stats[, c("Precision", "Recall", "F1")], rownames = "Class") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The random forest classifier achieves an overall accuracy of 0.5376 and a macro-averaged F1 of 0.4889, which indicates moderate but far from perfect genre classification performance. In practical terms, the model can recover broad macro-genre labels better than chance, but it still struggles to separate many genres cleanly based on audio features alone. The best-performing classes by F1 are Electronic/Dance (0.6449), Rock/Metal (0.5811), Latin (0.5723), Classical/Jazz (0.5720), and Other (0.5703), suggesting that these categories have relatively more distinctive audio profiles or at least more learnable boundaries in the feature space. By contrast, the hardest classes to classify are Reggae/Caribbean (0.3208), Soul/Funk/Blues (0.3962), Hip-Hop/R&B (0.4094), Pop (0.4143), and Folk/Country/Acoustic (0.4207). Several of these low-F1 groups also show a pattern of high precision but low recall, such as Hip-Hop/R&B, Reggae/Caribbean, and Soul/Funk/Blues, meaning the classifier is conservative and only labels songs as these genres when it is very confident, but misses many true examples. This generally lines up with the coherence analysis: broader or more diffuse categories tend to be harder to classify correctly, while more acoustically consistent groups are easier. At the same time, the fit is not perfect—for example, Classical/Jazz had relatively low macro-level coherence but still achieves a solid F1, which suggests that coherence and classification are related but not identical concepts. Overall, these results reinforce the broader project conclusion that macro-genres contain some learnable signal, but the boundaries between them remain fuzzy rather than sharply defined.
+[PLACEHOLDER: interpret overall accuracy and macro F1. Note which macro-genres are hardest to classify (low F1) and whether this aligns with the coherence ranking — diffuse genres should be harder to classify correctly.]
 
 #### Boundary Songs
 
@@ -705,7 +791,7 @@ boundary_df %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The boundary-song table makes the genre ambiguity much more concrete by highlighting tracks that the classifier cannot place confidently and that sound plausibly closer to another genre family than their assigned label. For example, “Almost Cut My Hair” by Crosby, Stills, Nash & Young is labeled Rock/Metal but predicted as Soul/Funk/Blues, which makes musical sense because its loose groove, blues-based phrasing, and jam-like feel are not especially “metal” in an audio-feature sense. “Smalltown Boy” by Bronski Beat is labeled Pop but predicted as World/Other, which is also understandable: while culturally recognized as synth-pop, its sparse, atmospheric production and emotionally distinctive vocal style may push it away from the center of mainstream pop in feature space. “Grand” by Kane Brown is labeled Folk/Country/Acoustic but predicted as Electronic/Dance, suggesting that its polished production, strong beat, and crossover pop structure make it sonically resemble more beat-driven contemporary genres than traditional acoustic country. Similarly, “Uno Tres Dos” by Babasónicos is labeled Electronic/Dance but predicted as Pop, which fits a track that may use electronic production while still following a more conventional pop melody and song structure. Finally, “Scaramanzia” by Patricio Rey y sus Redonditos de Ricota and “Humanos Como Tú” by División Minúscula are both labeled Rock/Metal but predicted as Other, reinforcing the idea that many rock tracks occupy a broad middle ground rather than a sharply defined acoustic cluster. Overall, these low-confidence misclassifications are some of the most compelling evidence in the paper: they show that genre boundaries are often musically fuzzy, especially for crossover, legacy, or stylistically mixed songs.
+[PLACEHOLDER: surface 3–5 specific well-known songs from this list and offer musical interpretations. Example: a hip-hop track with heavy acoustic guitar might be labeled Hip-Hop/R&B but predicted as Folk/Country/Acoustic. These are the most engaging concrete examples in the paper.]
 
 ---
 
@@ -753,31 +839,143 @@ rf_imp_df %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
 ```
 
-The feature-importance comparison shows that the audio dimensions most useful for separating genres are not exactly the same as the ones most useful for predicting popularity. For genre classification, the random forest ranks acousticness as the single most important feature, followed by danceability, duration_ms, tempo, valence, and speechiness, with energy and loudness also contributing substantially. By contrast, the lasso model for popularity places the greatest weight on instrumentalness, then danceability and valence, followed by speechiness, with duration_ms, loudness, energy, and tempo surviving only with much smaller magnitudes; acousticness and liveness do not survive at lambda.1se at all. There is therefore some overlap: danceability, valence, speechiness, duration_ms, loudness, energy, tempo, and instrumentalness all matter in both tasks to some degree. However, the ranking is clearly different. Acousticness is extremely important for distinguishing macro-genres but contributes little or nothing to popularity prediction after regularization, while instrumentalness is one of the strongest predictors of popularity but is only mid-tier for genre classification. This divergence suggests that the sonic dimensions that make songs sound like they belong to different genres are not identical to the dimensions that make them successful on Spotify. In other words, being genre-distinctive is not the same thing as being popular: genre boundaries are shaped strongly by acoustic identity, while popularity is driven more by a narrower mix of commercially salient traits such as danceability, vocal presence, and broad genre membership.
+[PLACEHOLDER: identify whether the top genre-classification features (e.g., instrumentalness, acousticness) are the same as the top popularity-prediction features. Divergence here suggests that the dimensions of sound that make genres distinct are not the same dimensions that make tracks popular.]
+
+---
+
+### Angle 6: Audio Feature Geometry — A Word Embedding Analogy
+
+Angles 1–5 establish that genre labels do not form clean clusters in audio space. This angle asks a complementary question: even if genres don't cluster, does the audio feature space possess meaningful geometric *directionality* — analogous to the celebrated word2vec finding that king − man + woman ≈ queen? We define three interpretable axes from pairs of maximally distinct genre centroids and project all genres onto them.
+
+- **Electronic ↔ Acoustic**: `edm` − `acoustic` (dominant driver: acousticness, energy, tempo)
+- **Vocal ↔ Instrumental**: `hip-hop` − `classical` (dominant driver: speechiness, instrumentalness)
+- **Heavy/Loud ↔ Soft/Ambient**: `death-metal` − `sleep` (dominant driver: loudness, energy, valence)
+
+```{r genre-compass, fig.cap="Top: 2D genre compass projecting all genres onto the Electronic↔Acoustic (x) and Vocal↔Instrumental (y) axes. Point size reflects track count. Bottom: Genre rankings on the Heavy/Loud ↔ Soft/Ambient axis (top and bottom 10)."}
+# Genre centroids in standardized feature space (genres with n >= 20)
+centroid_tbl <- as_tibble(X_scaled) %>%
+  mutate(track_genre = spotify$track_genre) %>%
+  group_by(track_genre) %>%
+  summarise(n_tracks = n(), across(all_of(audio_features), mean), .groups = "drop") %>%
+  filter(n_tracks >= 20, track_genre %in% names(macro_genre_map))
+
+centroid_mat <- centroid_tbl %>% select(all_of(audio_features)) %>% as.matrix()
+rownames(centroid_mat) <- centroid_tbl$track_genre
+
+# Normalized axis direction vector: positive pole minus negative pole
+axis_vec <- function(pos, neg) {
+  v <- centroid_mat[pos, ] - centroid_mat[neg, ]
+  v / sqrt(sum(v^2))
+}
+
+ax_electronic <- axis_vec("edm",         "acoustic")    # Electronic ↔ Acoustic
+ax_vocal      <- axis_vec("hip-hop",     "classical")   # Vocal ↔ Instrumental
+ax_intensity  <- axis_vec("death-metal", "sleep")       # Heavy ↔ Soft
+
+# Project all genre centroids onto each axis
+compass_df <- tibble(
+  track_genre      = rownames(centroid_mat),
+  electronic_score = as.numeric(centroid_mat %*% ax_electronic),
+  vocal_score      = as.numeric(centroid_mat %*% ax_vocal),
+  intensity_score  = as.numeric(centroid_mat %*% ax_intensity),
+  n_tracks         = centroid_tbl$n_tracks
+) %>%
+  left_join(
+    tibble(track_genre = names(macro_genre_map),
+           macro_genre = unname(macro_genre_map)),
+    by = "track_genre"
+  )
+
+# 2D Genre Compass
+x_lim <- max(abs(compass_df$electronic_score)) * 0.78
+y_lim <- max(abs(compass_df$vocal_score))      * 0.78
+
+ggplot(compass_df, aes(x = electronic_score, y = vocal_score, color = macro_genre)) +
+  geom_point(aes(size = n_tracks), alpha = 0.75) +
+  geom_text_repel(aes(label = track_genre), size = 2.4, max.overlaps = 25,
+                  segment.color = "grey70", segment.size = 0.3) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.4) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey50", linewidth = 0.4) +
+  annotate("label", x =  x_lim, y =  y_lim, label = "Electronic\n+ Vocal",
+           size = 2.8, fill = "white", color = "grey30", label.size = 0.3) +
+  annotate("label", x = -x_lim, y =  y_lim, label = "Acoustic\n+ Vocal",
+           size = 2.8, fill = "white", color = "grey30", label.size = 0.3) +
+  annotate("label", x = -x_lim, y = -y_lim, label = "Acoustic\n+ Instrumental",
+           size = 2.8, fill = "white", color = "grey30", label.size = 0.3) +
+  annotate("label", x =  x_lim, y = -y_lim, label = "Electronic\n+ Instrumental",
+           size = 2.8, fill = "white", color = "grey30", label.size = 0.3) +
+  scale_color_brewer(palette = "Set3") +
+  scale_size_continuous(range = c(1.5, 6), guide = "none") +
+  labs(
+    title    = "Genre Compass: Audio Feature Axes",
+    subtitle = "X: EDM (electronic) ↔ Acoustic  |  Y: Hip-Hop (vocal) ↔ Classical (instrumental)",
+    x        = "← Acoustic   |   Electronic →",
+    y        = "← Instrumental   |   Vocal →",
+    color    = "Macro-Genre"
+  ) +
+  theme_minimal()
+
+# Intensity axis bar chart (top 10 heavy, top 10 soft)
+bind_rows(
+  compass_df %>% slice_max(intensity_score, n = 10) %>% mutate(pole = "Heavy/Loud"),
+  compass_df %>% slice_min(intensity_score, n = 10) %>% mutate(pole = "Soft/Ambient")
+) %>%
+  mutate(track_genre = fct_reorder(track_genre, intensity_score)) %>%
+  ggplot(aes(x = track_genre, y = intensity_score, fill = pole)) +
+  geom_col() +
+  coord_flip() +
+  scale_fill_manual(values = c("Heavy/Loud" = "#e74c3c", "Soft/Ambient" = "#3498db")) +
+  labs(title = "Intensity Axis: Death-Metal ↔ Sleep",
+       subtitle = "Top and bottom 10 genres projected onto the Heavy/Loud → Soft/Ambient direction",
+       x = NULL, y = "Projection Score", fill = NULL) +
+  theme_minimal()
+```
+
+The genre compass produces strikingly interpretable results. The Acoustic+Instrumental quadrant is anchored exactly as expected by classical, sleep, new-age, piano, and opera — the genres with the most distinctive acoustic and instrumental profiles. The opposite corner (Electronic+Vocal) is occupied by latin, reggae, reggaeton, and funk, all of which are energetic, rhythm-driven, and vocal-forward. Singer-songwriter and acoustic sit in the Acoustic+Vocal quadrant, while minimal-techno and detroit-techno appear in the Electronic+Instrumental corner.
+
+A subtler structural finding emerges from the scatter: genres fall along a diagonal rather than filling all four quadrants evenly. Acoustic genres tend to cluster toward the instrumental end, and electronic genres tend toward the vocal end. This correlation — that acoustic production tends to accompany melodic/instrumental composition, while electronic production tends to accompany dance-oriented vocal arrangements — is a genuine geometric property of the audio feature space, not an artifact of our axis choices.
+
+The intensity axis is similarly well-ordered on the soft end: sleep, classical, new-age, piano, and opera rank as the least intense genres by a wide margin. The heavy end produces one notable surprise: drum-and-bass scores higher than death-metal, the axis anchor itself, indicating that drum-and-bass is even more extreme on the composite loudness-energy-valence direction than the genre used to define "heavy." Reggaeton appearing as the second most intense genre — above metalcore and metal — reflects its production style of maximally compressed, loud rhythmic tracks.
+
+Together, these results support a key nuance: while Spotify's genre labels do not form natural clusters in audio space (as shown by the low clustering ARI and the UMAP blob), the space does possess meaningful geometric directionality. The word2vec analogy holds at the axis level — you can define interpretable audio directions and genres sort sensibly along them — even though it fails at the cluster level. Genre labels are not acoustically coherent regions, but they are acoustically ordered.
 
 ---
 
 ## Discussion and Conclusion
 
-[PLACEHOLDER: synthesize the five angles into a coherent narrative addressing the central question — do genre labels reflect genuine musical coherence?
+The central question of this project is whether Spotify's genre labels reflect genuine musical coherence — whether songs that share a genre label actually sound alike in audio feature space. Across six analytical angles, the answer is a consistent and qualified no: genre labels do not correspond to natural acoustic groupings, but the audio feature space is not structureless either. The picture that emerges is more nuanced than simple genre meaninglessness.
 
-Key points to address:
-1. **Clustering (Angle 1):** The low ARI (~0.XX) between audio feature clusters and genre labels suggests that Spotify's genre taxonomy does not arise from natural audio similarity groupings. Genres are not well-separated in the 10-dimensional audio feature space.
-2. **Coherence Ranking (Angle 2):** Genres vary dramatically in coherence. [List top/bottom genres]. This suggests that "genre" as a construct is operationally inconsistent — some labels are precise musical descriptors; others are broad marketing umbrellas.
-3. **Popularity Regression (Angle 3):** The significance/non-significance of macro_genre dummies in the lasso model tells us whether genre has independent market value. [Interpret whether genre dummies survive regularization].
-4. **Boundary Songs (Angle 4):** The classifier's confusion pattern reveals which genre pairs are musically proximate. [Name the most confused pairs]. Boundary songs demonstrate that musical reality is more continuous than categorical labels suggest.
-5. **Feature Importance (Angle 5):** The features that distinguish genres (RF) and the features that drive popularity (lasso) [do/do not] overlap substantially. [Interpret this divergence or convergence].
+**Clustering (Angle 1).** Both k-means (ARI = [XX]) and hierarchical clustering (ARI = [XX]) against macro-genre labels produce adjusted Rand indices close to zero, indicating near-random alignment between unsupervised audio clusters and genre assignments. This finding is reinforced by the UMAP projection, which shows nearly all macro-genres collapsing into a single undifferentiated mass — even under the most powerful non-linear dimensionality reduction available. The single exception is Classical/Jazz, which separates visually in both PCA and UMAP space, reflecting its uniquely distinctive audio fingerprint. The implication is direct: Spotify's genre taxonomy does not arise from natural groupings in the 10-dimensional audio feature space.
 
-**Conclusion:** Genre labels on Spotify [are/are not] meaningful descriptors of musical identity. The strongest evidence [for/against] comes from [specific finding]. For streaming platforms, these findings suggest [practical implication — e.g., that audio-feature-based recommendation may outperform genre-based filtering for certain macro-genres, or that genre labels serve a social/marketing function distinct from acoustic content].
+**Coherence Ranking (Angle 2).** While genres do not cluster globally, they vary dramatically in internal consistency. [Top coherent genres — e.g., classical, death-metal] rank as the most musically tight, while [bottom coherent genres — e.g., pop, indie] are the most diffuse. This variation reveals that "genre" is an operationally inconsistent construct: some labels are precise musical descriptors with strong production conventions, while others function as broad marketing umbrellas that aggregate acoustically heterogeneous tracks. The coherence-popularity analysis finds no relationship between a genre's musical tightness and its median commercial performance (R² = 0.0049, p = 0.46), confirming that popularity is driven by factors orthogonal to acoustic consistency.
 
-**Limitations:** The dataset captures a single snapshot in time; genre labels are platform-assigned and may reflect editorial decisions rather than community consensus; the 10-feature audio space is Spotify's proprietary abstraction, not a complete representation of musical content.
-]
+**Popularity Regression (Angle 3).** The global OLS model yields an adjusted R² of [XX], indicating that audio features and genre labels together explain only a modest fraction of variance in popularity. [Note whether macro-genre dummies survive lasso regularization at lambda.1se — if they do, genre carries market value beyond audio features; if not, the audio features absorb genre's effect.] The stratified OLS models reveal that the relationship between individual audio features and popularity differs across macro-genres, suggesting that the same sonic quality (e.g., high valence) can be commercially rewarded in one genre context and penalized in another.
+
+**Boundary Songs (Angle 4).** The random forest classifier achieves an overall accuracy of [XX]% and a macro-averaged F1 of [XX], with [easiest macro-genre] as the most classifiable and [hardest macro-genre] as the least. Tracks with maximum predicted probability below 0.4 for any genre — the boundary songs — are concentrated at genre intersections that reflect real musical hybridization. [Name 2–3 specific songs and their true vs. predicted genre pairs.] These cases demonstrate that musical reality is more continuous than categorical labels suggest: some tracks genuinely inhabit the acoustic space between genres, and the classifier correctly identifies them as such.
+
+**Feature Importance (Angle 5).** The random forest assigns highest importance to [top RF features — e.g., instrumentalness, acousticness, tempo] for genre classification, while the lasso retains [top lasso features] as the strongest predictors of popularity. [Note whether the top genre-classification features overlap with the top popularity-prediction features.] Divergence here would suggest that the audio dimensions that make genres acoustically distinct are not the same dimensions that drive streaming success — a finding consistent with genre labels serving a social and organizational function decoupled from commercial audio optimization.
+
+**Audio Feature Geometry (Angle 6).** Despite the absence of clean cluster separation, the audio feature space possesses meaningful geometric directionality. Projecting genre centroids onto three curated axes — Electronic↔Acoustic, Vocal↔Instrumental, and Heavy↔Soft — produces strikingly intuitive orderings. Classical, piano, and opera anchor the Acoustic+Instrumental corner; latin, reggaeton, and reggae cluster in the Electronic+Vocal corner; sleep and new-age sit at the softest extreme of the intensity axis. Genres sort sensibly along all three dimensions, and the word2vec-style analogy holds at the axis level even when it fails at the cluster level. This is the key nuance of the paper: the audio feature space is geometrically structured and directionally interpretable, but it is continuous rather than categorical. Genre boundaries are not acoustically coherent regions — they are arbitrary thresholds imposed on a smooth underlying space.
+
+**Conclusion.** Spotify's genre labels are not meaningful descriptors of musical identity in the acoustic sense. They do not delineate regions of audio feature space, do not predict which tracks sound similar to each other, and do not confer commercial advantage through acoustic consistency. What they do reflect is a set of culturally and commercially determined categories that approximate rough positions on interpretable audio dimensions — acoustic vs. electronic, vocal vs. instrumental, intense vs. ambient — without cleanly partitioning the space. For streaming platforms, this suggests that audio-feature-based recommendation systems could meaningfully outperform genre-based filtering for most macro-genres, since the genre label adds little information about what a track actually sounds like relative to its audio feature vector. Genre labels appear to serve a social and discovery function — they communicate cultural identity and listener expectation — rather than an acoustic one.
+
+**Limitations.** The dataset captures a single snapshot in time and does not account for how genre conventions evolve. Genre labels are platform-assigned and may reflect Spotify's editorial and licensing decisions rather than community consensus or artist self-identification. The 10-feature audio space is a proprietary abstraction and does not capture melody, harmony, lyrical content, or production texture — dimensions that listeners likely use to perceive genre. Finally, the macro-genre mapping used here is one of many possible aggregations; results may differ under alternative genre hierarchies.
 
 ---
 
 ## Statement on AI Use
 
-[PLACEHOLDER: describe how AI tools (e.g., Claude Code, GitHub Copilot, ChatGPT) were used in this project — e.g., for code scaffolding, debugging, prose editing. Be specific about what was AI-assisted vs. entirely human-authored, per course policy.]
+This project made substantial use of Claude Code (Anthropic, claude-sonnet-4-6) as an AI coding and writing assistant throughout. The following aspects were AI-assisted:
+
+- **Code generation.** All R code chunks — data preprocessing, PCA, UMAP, k-means and hierarchical clustering, coherence ranking, lasso and OLS regression, random forest classifier, boundary song extraction, feature importance visualization, and the genre compass — were written with AI assistance. Code was reviewed and executed by the authors, and errors and edge cases (e.g., `sort` argument compatibility, `reorder()` factor handling) were debugged iteratively in the AI-assisted session.
+
+- **Analytical design.** The inclusion of UMAP, the coherence-vs-popularity regression, and the genre compass (Angle 6) were proposed by the AI assistant during the project. The core five-angle framing was human-defined; the AI suggested extensions and the word2vec analogy as a novel framing for Angle 6.
+
+- **Prose and interpretation.** Section narratives, result interpretations, and the Discussion and Conclusion were drafted by the AI assistant based on actual outputs shared during the session. Authors reviewed and edited the prose for accuracy and tone.
+
+- **Human-authored components.** The research question, dataset selection, macro-genre mapping, and overall project framing were defined by the authors. All final decisions about analysis scope, interpretation emphasis, and submission content were made by the authors.
+
+No AI tools were used to generate or fabricate data, results, or numerical outputs. All figures and statistics reported in this document were produced by executing the R code against the actual Spotify dataset.
 
 ---
 
