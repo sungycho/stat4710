@@ -233,7 +233,7 @@ To assess genre coherence from multiple perspectives, we organize our analysis i
 
 We apply PCA to assess whether the 10-dimensional audio feature space can be summarized into a smaller set of components, and to provide an initial visual check of whether macro-genres occupy distinct regions of that space. PCA is appropriate here because the correlation structure in the audio features (notably energy–loudness and energy–acousticness) suggests redundant dimensions that PCA can compress.
 
-```{r pca-fit"}
+```{r pca-fit}
 set.seed(42)
 
 pca_fit <- prcomp(X_scaled, scale. = FALSE)  # already standardized
